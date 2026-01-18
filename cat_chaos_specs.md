@@ -36,8 +36,8 @@ A web-based chaos management game where players manage increasingly demanding ca
 2. Player uses right panel to manage cats + game board for food/water
 3. "No No" button prevents disasters (requires rapid clicking)
 4. Score increases from good actions, decreases from disasters
-5. Mood meters add secondary lose condition
-6. Game ends when score ≤ 0 OR any mood ≤ 0
+5. Points-only penalties and rewards (no mood tracking)
+6. Game ends when score ≤ 0 (or player quits)
 
 ---
 
@@ -54,7 +54,7 @@ A web-based chaos management game where players manage increasingly demanding ca
 | View score/events | Top center + log | Gameplay doc |
 | Cat movement system | Game board | Gameplay doc |
 | Round progression | System | Gameplay doc |
-| Mood meter system | Right panel | Gameplay doc |
+| Score-only system | System | Gameplay doc |
 | Difficulty scaling | System | Gameplay doc |
 
 ---
@@ -71,15 +71,15 @@ A web-based chaos management game where players manage increasingly demanding ca
 | Prevent disaster | 0 (saves -15) |
 
 ### Negative Events
-| Event | Points | Mood Drop |
-|-------|--------|-----------|
-| Food missed | -5 mood | -5% |
-| Water missed | -3 mood | -3% |
-| Play missed | -3 mood | -3% |
-| Pet missed | -2 mood | -2% |
-| Item broken | -15 | -10% |
+| Event | Points |
+|-------|--------|
+| Food missed | -5 |
+| Water missed | -3 |
+| Play missed | -3 |
+| Pet missed | -2 |
+| Item broken | -15 |
 
-**Game Over:** Score ≤ 0 OR any cat's mood ≤ 0
+**Game Over:** Score ≤ 0 (or player quits)
 
 ---
 
@@ -105,7 +105,6 @@ A web-based chaos management game where players manage increasingly demanding ca
   - Current need icon + countdown timer
   - Primary action button (changes based on need)
   - "No No" button for disaster prevention
-  - Visible mood meter
 
 ### Game Board (Center)
 - Room with interactive zones (food bowl, water bowl, toys, fragile objects)

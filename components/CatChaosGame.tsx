@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  RoomElements, Window, CatTree,
+  Window, CatTree,
   FoodBowl, WaterBowl, Rug, Bookshelf, Sofa, CoffeeTable,
   Vase, TableLamp, CoffeeMug, Plant, ToyBall, YarnBall,
   CatSprite, SisalPattern, BackWall, SideWalls, ElementLabel,
@@ -19,6 +19,7 @@ interface Cat {
   velocity: { x: number; y: number };
   needs: {
     hunger: number;
+    water: number;
     play: number;
     attention: number;
   };
@@ -40,6 +41,7 @@ interface Zone {
   isFallen?: boolean;
   isEmpty?: boolean;
   fillLevel?: number;
+  lastNoNoFailAt?: number;
 }
 
 interface Popup {
@@ -47,6 +49,19 @@ interface Popup {
   value: string;
   x: number;
   y: number;
+}
+
+interface ActionWindow {
+  type: 'food' | 'water' | 'play' | 'pet' | 'no_no';
+  catId: string;
+  requiredPresses: number;
+  currentPresses: number;
+  expiresAt: number;
+  zoneId?: string;
+}
+
+function getRandomInt(min: number, max: number) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 // Constants
@@ -57,6 +72,15 @@ const WANDER_SPEED = 0.25;
 const NEED_INCREMENT = 0.4;
 const DISASTER_THRESHOLD = 65;
 const SCOLD_DURATION = 2000;
+const ACTION_WINDOW_MS = 8000;
+const ACTION_PRESS_COUNTS = {
+  food: 5,
+  water: 4,
+  play: 4,
+  pet: 1,
+  noNoMin: 3,
+  noNoMax: 5,
+};
 
 // Cat data
 const CATS = [
@@ -126,12 +150,14 @@ const getRandomSpawnPosition = (): { x: number; y: number } => {
 // Need colors
 const NEED_COLORS = {
   hunger: { low: '#22c55e', med: '#eab308', high: '#f97316', critical: '#ef4444' },
+  water: { low: '#22c55e', med: '#eab308', high: '#f97316', critical: '#ef4444' },
   play: { low: '#22c55e', med: '#eab308', high: '#f97316', critical: '#ef4444' },
   attention: { low: '#22c55e', med: '#eab308', high: '#f97316', critical: '#ef4444' },
 };
 
 const NEED_ICONS = {
   hunger: '🍖',
+  water: '💧',
   play: '🧶',
   attention: '💕',
 };
@@ -144,9 +170,10 @@ export default function CatChaosGame() {
   const [gameStarted, setGameStarted] = useState(false);
   const [popups, setPopups] = useState<Popup[]>([]);
   const [disasterMode, setDisasterMode] = useState(false);
-  const [hoveredCat, setHoveredCat] = useState<string | null>(null);
   const [showLabels, setShowLabels] = useState(false); // Toggle for educational labels
-  const gameLoopRef = useRef<number>();
+  const [activeCatId, setActiveCatId] = useState<string | null>(null);
+  const [actionWindow, setActionWindow] = useState<ActionWindow | null>(null);
+  const gameLoopRef = useRef<number | null>(null);
   const catIdRef = useRef(0);
 
   // Add popup
@@ -159,14 +186,15 @@ export default function CatChaosGame() {
   }, []);
 
   // Get most urgent need
-  const getMostUrgentNeed = (cat: Cat): { type: 'hunger' | 'play' | 'attention'; value: number; zone?: Zone } => {
+  const getMostUrgentNeed = useCallback((cat: Cat): { type: 'hunger' | 'water' | 'play' | 'attention'; value: number; zone?: Zone } => {
     const needs = [
       { type: 'hunger' as const, value: cat.needs.hunger, zone: zones.find(z => z.type === 'food_bowl') },
-      { type: 'play' as const, value: cat.needs.play, zone: zones.find(z => z.type === 'cat_tree') },
+      { type: 'water' as const, value: cat.needs.water, zone: zones.find(z => z.type === 'water_bowl') },
+      { type: 'play' as const, value: cat.needs.play, zone: zones.find(z => z.type === 'toy') },
       { type: 'attention' as const, value: cat.needs.attention },
     ];
     return needs.sort((a, b) => b.value - a.value)[0];
-  };
+  }, [zones]);
 
   // Get need color based on level
   const getNeedFillColor = (value: number): string => {
@@ -176,42 +204,43 @@ export default function CatChaosGame() {
     return NEED_COLORS.hunger.critical;
   };
 
-  // Fill food bowl
-  const fillFoodBowl = () => {
-    setZones(prev => prev.map(z => {
-      if (z.id === 'food_bowl') {
-        addPopup(z.position.x + 27, z.position.y - 15, '+5 🍖');
-        setScore(s => Math.min(s + 5, 200));
-        return { ...z, isEmpty: false, fillLevel: 100 };
-      }
-      return z;
-    }));
-  };
+  const getActionPrompt = useCallback((catId: string) => {
+    if (actionWindow && actionWindow.catId === catId) {
+      const remaining = Math.max(0, actionWindow.requiredPresses - actionWindow.currentPresses);
+      if (actionWindow.type === 'food') return `Press F ×${remaining}`;
+      if (actionWindow.type === 'water') return `Press W ×${remaining}`;
+      if (actionWindow.type === 'play') return `Press P ×${remaining}`;
+      if (actionWindow.type === 'pet') return `Press T ×${remaining}`;
+      if (actionWindow.type === 'no_no') return `Press N ×${remaining}`;
+    }
+    if (activeCatId === catId) {
+      return 'Select an action';
+    }
+    return '';
+  }, [actionWindow, activeCatId]);
 
-  // Fill water bowl
-  const fillWaterBowl = () => {
-    setZones(prev => prev.map(z => {
-      if (z.id === 'water_bowl') {
-        addPopup(z.position.x + 27, z.position.y - 15, '+3 💧');
-        setScore(s => Math.min(s + 3, 200));
-        return { ...z, fillLevel: 100 };
-      }
-      return z;
-    }));
-  };
+  const startActionWindow = useCallback((type: ActionWindow['type'], catId: string, zoneId?: string, initialPresses = 0) => {
+    if (actionWindow) return;
+    const requiredPresses = type === 'no_no'
+      ? getRandomInt(ACTION_PRESS_COUNTS.noNoMin, ACTION_PRESS_COUNTS.noNoMax)
+      : ACTION_PRESS_COUNTS[type];
+    setActionWindow({
+      type,
+      catId,
+      requiredPresses,
+      currentPresses: initialPresses,
+      expiresAt: Date.now() + ACTION_WINDOW_MS,
+      zoneId,
+    });
+  }, [actionWindow]);
 
-  // Scold cat
-  const scoldCat = (catId: string) => {
-    setCats(prev => prev.map(cat => {
-      if (cat.id !== catId) return cat;
-      addPopup(cat.position.x, cat.position.y - 50, 'No No! ✋');
-      setScore(s => s + 2);
-      return { ...cat, state: 'scolded', lastMoveTime: Date.now() };
-    }));
-  };
+  const clearActionWindow = useCallback(() => {
+    setActionWindow(null);
+    setActiveCatId(null);
+  }, []);
 
   // Fulfill cat need
-  const fulfillNeed = (catId: string, needType: 'hunger' | 'play' | 'attention') => {
+  const fulfillNeed = (catId: string, needType: 'hunger' | 'water' | 'play' | 'attention') => {
     setCats(prev => prev.map(cat => {
       if (cat.id !== catId) return cat;
 
@@ -219,8 +248,9 @@ export default function CatChaosGame() {
       let actionText = '';
       switch (needType) {
         case 'hunger': points = 10; actionText = '+10 🍖'; break;
-        case 'play': points = 15; actionText = '+15 🎾'; break;
-        case 'attention': points = 5; actionText = '+5 💕'; break;
+        case 'water': points = 7; actionText = '+7 💧'; break;
+        case 'play': points = 12; actionText = '+12 🎾'; break;
+        case 'attention': points = 6; actionText = '+6 💕'; break;
       }
 
       addPopup(cat.position.x, cat.position.y - 35, actionText);
@@ -232,7 +262,11 @@ export default function CatChaosGame() {
           ...cat.needs,
           [needType]: Math.max(0, cat.needs[needType] - 50),
         },
-        state: needType === 'hunger' ? 'eating' : needType === 'play' ? 'playing' : 'purring',
+        state: needType === 'hunger' || needType === 'water'
+          ? 'eating'
+          : needType === 'play'
+            ? 'playing'
+            : 'purring',
         lastMoveTime: Date.now(),
       };
     }));
@@ -242,6 +276,133 @@ export default function CatChaosGame() {
     }, 600);
   };
 
+  const applyActionSuccess = useCallback((window: ActionWindow) => {
+    if (window.type === 'food') {
+      fulfillNeed(window.catId, 'hunger');
+      setZones(prev => prev.map(z => z.id === 'food_bowl' ? { ...z, isEmpty: false, fillLevel: 100 } : z));
+    }
+    if (window.type === 'water') {
+      fulfillNeed(window.catId, 'water');
+      setZones(prev => prev.map(z => z.id === 'water_bowl' ? { ...z, fillLevel: 100 } : z));
+    }
+    if (window.type === 'play') {
+      fulfillNeed(window.catId, 'play');
+    }
+    if (window.type === 'pet') {
+      fulfillNeed(window.catId, 'attention');
+    }
+    if (window.type === 'no_no' && window.zoneId) {
+      setZones(prev => prev.map(z => z.id === window.zoneId ? { ...z, isWobbling: false, lastNoNoFailAt: undefined } : z));
+      addPopup(
+        cats.find(cat => cat.id === window.catId)?.position.x ?? 0,
+        cats.find(cat => cat.id === window.catId)?.position.y ?? 0,
+        'Saved! ✋'
+      );
+    }
+    clearActionWindow();
+  }, [addPopup, cats, clearActionWindow, fulfillNeed]);
+
+  const applyActionFailure = useCallback((window: ActionWindow) => {
+    if (window.type === 'food') {
+      setScore(s => s - 6);
+      addPopup(cats.find(cat => cat.id === window.catId)?.position.x ?? 0, cats.find(cat => cat.id === window.catId)?.position.y ?? 0, '-6');
+    }
+    if (window.type === 'water') {
+      setScore(s => s - 4);
+      addPopup(cats.find(cat => cat.id === window.catId)?.position.x ?? 0, cats.find(cat => cat.id === window.catId)?.position.y ?? 0, '-4');
+    }
+    if (window.type === 'play') {
+      setScore(s => s - 4);
+      addPopup(cats.find(cat => cat.id === window.catId)?.position.x ?? 0, cats.find(cat => cat.id === window.catId)?.position.y ?? 0, '-4');
+    }
+    if (window.type === 'pet') {
+      setScore(s => s - 3);
+      addPopup(cats.find(cat => cat.id === window.catId)?.position.x ?? 0, cats.find(cat => cat.id === window.catId)?.position.y ?? 0, '-3');
+    }
+    if (window.type === 'no_no' && window.zoneId) {
+      const now = Date.now();
+      let didBreak = false;
+      setZones(prev => prev.map(z => {
+        if (z.id !== window.zoneId) return z;
+        if (z.lastNoNoFailAt && now - z.lastNoNoFailAt <= 15000) {
+          didBreak = true;
+          return { ...z, isWobbling: false, isFallen: true, lastNoNoFailAt: undefined };
+        }
+        return { ...z, lastNoNoFailAt: now };
+      }));
+      if (didBreak) {
+        setScore(s => s - 15);
+        addPopup(
+          cats.find(cat => cat.id === window.catId)?.position.x ?? 0,
+          cats.find(cat => cat.id === window.catId)?.position.y ?? 0,
+          '-15 💔'
+        );
+      } else {
+        setScore(s => s - 5);
+        addPopup(
+          cats.find(cat => cat.id === window.catId)?.position.x ?? 0,
+          cats.find(cat => cat.id === window.catId)?.position.y ?? 0,
+          '-5 ⚠️'
+        );
+      }
+    }
+    clearActionWindow();
+  }, [addPopup, cats, clearActionWindow]);
+
+  useEffect(() => {
+    if (!actionWindow) return;
+    const interval = setInterval(() => {
+      if (Date.now() > actionWindow.expiresAt) {
+        applyActionFailure(actionWindow);
+      }
+    }, 200);
+    return () => clearInterval(interval);
+  }, [actionWindow, applyActionFailure]);
+
+  useEffect(() => {
+    if (!gameStarted || gameOver) return;
+    const handler = (event: KeyboardEvent) => {
+      if (!activeCatId) return;
+      const key = event.key.toLowerCase();
+      if (actionWindow) {
+        const isCorrectKey =
+          (actionWindow.type === 'food' && key === 'f') ||
+          (actionWindow.type === 'water' && key === 'w') ||
+          (actionWindow.type === 'play' && key === 'p') ||
+          (actionWindow.type === 'pet' && key === 't') ||
+          (actionWindow.type === 'no_no' && key === 'n');
+        if (!isCorrectKey) return;
+        setActionWindow(prev => {
+          if (!prev) return prev;
+          const nextCount = prev.currentPresses + 1;
+          if (nextCount >= prev.requiredPresses) {
+            applyActionSuccess(prev);
+            return null;
+          }
+          return { ...prev, currentPresses: nextCount };
+        });
+        return;
+      }
+      if (key === 't') {
+        applyActionSuccess({
+          type: 'pet',
+          catId: activeCatId,
+          requiredPresses: 1,
+          currentPresses: 1,
+          expiresAt: Date.now() + ACTION_WINDOW_MS,
+        });
+        return;
+      }
+      if (key === 'n') {
+        const wobblingZone = zones.find(z => z.isWobbling && !z.isFallen);
+        if (!wobblingZone) return;
+        startActionWindow('no_no', activeCatId, wobblingZone.id, 1);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [activeCatId, actionWindow, applyActionSuccess, gameOver, gameStarted, startActionWindow, zones]);
+
   // Start game
   const startGame = useCallback(() => {
     const pos = getRandomSpawnPosition();
@@ -250,7 +411,7 @@ export default function CatChaosGame() {
       ...CATS[0],
       position: pos,
       velocity: { x: 0, y: 0 },
-      needs: { hunger: 15, play: 15, attention: 15 },
+      needs: { hunger: 15, water: 15, play: 15, attention: 15 },
       state: 'idle',
       target: null,
       personality: 'balanced',
@@ -258,12 +419,14 @@ export default function CatChaosGame() {
     }];
 
     setCats(initialCats);
-    setZones(ROOM_ZONES.map(z => ({ ...z, isWobbling: false, isFallen: false })));
+    setZones(ROOM_ZONES.map(z => ({ ...z, isWobbling: false, isFallen: false, lastNoNoFailAt: undefined })));
     setScore(100);
     setGameOver(false);
     setGameStarted(true);
     setPopups([]);
     setDisasterMode(false);
+    setActiveCatId(null);
+    setActionWindow(null);
     catIdRef.current = 1;
   }, []);
 
@@ -280,7 +443,7 @@ export default function CatChaosGame() {
           ...catTemplate,
           position: pos,
           velocity: { x: 0, y: 0 },
-          needs: { hunger: 20, play: 20, attention: 20 },
+        needs: { hunger: 20, water: 20, play: 20, attention: 20 },
           state: 'idle',
           target: null,
           personality: catIdRef.current === 1 ? 'mischievous' : 'balanced',
@@ -304,16 +467,17 @@ export default function CatChaosGame() {
         let newScore = score;
         let disasterOccurred = false;
 
-        const updatedCats = prevCats.map(cat => {
+        const updatedCats: Cat[] = prevCats.map(cat => {
           if (cat.state === 'scolded') {
             if (Date.now() - cat.lastMoveTime > SCOLD_DURATION) {
-              return { ...cat, state: 'idle', target: null };
+              return { ...cat, state: 'idle', target: null } as Cat;
             }
             return cat;
           }
 
           const newNeeds = {
             hunger: Math.min(100, cat.needs.hunger + NEED_INCREMENT),
+            water: Math.min(100, cat.needs.water + NEED_INCREMENT),
             play: Math.min(100, cat.needs.play + NEED_INCREMENT),
             attention: Math.min(100, cat.needs.attention + NEED_INCREMENT),
           };
@@ -345,8 +509,9 @@ export default function CatChaosGame() {
           }
 
           if (newTarget && cat.state === 'idle') {
-            const dx = newTarget.x - cat.position.x;
-            const dy = newTarget.y - cat.position.y;
+            const target = newTarget;
+            const dx = target.x - cat.position.x;
+            const dy = target.y - cat.position.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
 
             if (dist > 5) {
@@ -357,8 +522,8 @@ export default function CatChaosGame() {
               };
             } else {
               const zone = zones.find(z =>
-                Math.abs(z.position.x + (z.width || 0)/2 - newTarget.x) < 50 &&
-                Math.abs(z.position.y + (z.height || 0)/2 - newTarget.y) < 50
+                Math.abs(z.position.x + (z.width || 0)/2 - target.x) < 50 &&
+                Math.abs(z.position.y + (z.height || 0)/2 - target.y) < 50
               );
 
               if (zone && (zone.type === 'vase' || zone.type === 'lamp' || zone.type === 'mug')) {
@@ -382,6 +547,20 @@ export default function CatChaosGame() {
                 }));
                 newTarget = null;
               } else if (zone?.type === 'food_bowl' && zone.isEmpty) {
+                newTarget = null;
+              }
+
+              if (zone?.type === 'water_bowl' && (zone.fillLevel || 0) > 0) {
+                newNeeds.water = Math.max(0, newNeeds.water - 40);
+                setZones(prevZ => prevZ.map(z => {
+                  if (z.id === 'water_bowl') {
+                    const newLevel = (z.fillLevel || 0) - 35;
+                    return { ...z, fillLevel: Math.max(0, newLevel) };
+                  }
+                  return z;
+                }));
+                newTarget = null;
+              } else if (zone?.type === 'water_bowl' && (zone.fillLevel || 0) <= 0) {
                 newTarget = null;
               }
 
@@ -409,7 +588,7 @@ export default function CatChaosGame() {
             velocity: newVelocity,
             target: newTarget,
             lastMoveTime: cat.lastMoveTime,
-          };
+          } as Cat;
         });
 
         zones.forEach(zone => {
@@ -448,7 +627,7 @@ export default function CatChaosGame() {
     return () => {
       if (gameLoopRef.current) cancelAnimationFrame(gameLoopRef.current);
     };
-  }, [gameStarted, gameOver, score, zones]);
+  }, [gameStarted, gameOver, getMostUrgentNeed, score, zones]);
 
   // Reset fallen objects
   useEffect(() => {
@@ -477,10 +656,10 @@ export default function CatChaosGame() {
             give them attention, and protect your stuff from chaos!
           </p>
           <div className="grid grid-cols-2 gap-4 text-stone-300 text-sm">
-            <div className="flex items-center gap-2"><span className="text-2xl">🥣</span> Click bowls to fill</div>
-            <div className="flex items-center gap-2"><span className="text-2xl">✋</span> Say "No No!" to scold</div>
-            <div className="flex items-center gap-2"><span className="text-2xl">⚠️</span> Click to save items!</div>
-            <div className="flex items-center gap-2"><span className="text-2xl">🏰</span> Cats love cat tower!</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">🖱️</span> Click a cat to activate</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">🥣</span> Click bowl, then press F/W</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">🎾</span> Click toy, then press P</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">✋</span> Press N to stop chaos</div>
           </div>
           <button
             onClick={startGame}
@@ -492,7 +671,7 @@ export default function CatChaosGame() {
       ) : (
         <>
           {/* HUD */}
-          <div className="flex gap-6 mb-3 bg-stone-800/90 px-6 py-2 rounded-full shadow-lg border border-stone-700 items-center">
+          <div className="flex gap-6 mb-4 bg-stone-800/90 px-6 py-2 rounded-full shadow-lg border border-stone-700 items-center">
             <div className={`text-2xl font-bold ${score <= 25 ? 'text-red-400 animate-pulse' : 'text-amber-300'}`}>
               {score}
             </div>
@@ -511,12 +690,64 @@ export default function CatChaosGame() {
             </button>
           </div>
 
-          {/* Game Room */}
-          <div
-            className={`relative rounded-xl shadow-2xl overflow-hidden border-4 border-stone-600 ${disasterMode ? 'animate-shake' : ''}`}
-            style={{ width: GAME_WIDTH, height: GAME_HEIGHT }}
-          >
-            <svg width={GAME_WIDTH} height={GAME_HEIGHT} viewBox={`0 0 ${GAME_WIDTH} ${GAME_HEIGHT}`}>
+          <div className="flex gap-6 items-start">
+            {/* Right Panel */}
+            <div className="w-72 bg-stone-800/90 border border-stone-700 rounded-xl p-4 shadow-xl">
+              <h2 className="text-stone-200 font-semibold mb-3">Cats</h2>
+              <div className="space-y-3">
+                {[...cats]
+                  .sort((a, b) => getMostUrgentNeed(b).value - getMostUrgentNeed(a).value)
+                  .map(cat => {
+                    const urgent = getMostUrgentNeed(cat);
+                    const isCritical = urgent.value >= DISASTER_THRESHOLD;
+                    const isActive = activeCatId === cat.id;
+                    const actionPrompt = getActionPrompt(cat.id);
+                    return (
+                      <button
+                        key={cat.id}
+                        onClick={() => {
+                          if (actionWindow) return;
+                          setActiveCatId(cat.id);
+                        }}
+                        className={`w-full text-left bg-stone-900/70 border rounded-lg p-3 transition-colors ${
+                          isActive ? 'border-amber-400/80 ring-2 ring-amber-400/30' : 'border-stone-700 hover:border-stone-500'
+                        }`}
+                        type="button"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="text-stone-200 font-medium flex items-center gap-2">
+                            <span>{cat.emoji}</span>
+                            <span>{cat.name}</span>
+                          </div>
+                          {isCritical && (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-red-500 text-white font-semibold">URGENT</span>
+                          )}
+                        </div>
+                        <div className="text-stone-400 text-xs mt-2 flex items-center gap-2">
+                          <span>{NEED_ICONS[urgent.type]}</span>
+                          <span className="uppercase">{urgent.type}</span>
+                        </div>
+                        <div className="mt-2 h-2 rounded-full bg-stone-700 overflow-hidden">
+                          <div
+                            className="h-full rounded-full"
+                            style={{ width: `${Math.min(100, Math.round(urgent.value))}%`, backgroundColor: getNeedFillColor(urgent.value) }}
+                          />
+                        </div>
+                        {actionPrompt && (
+                          <div className="mt-2 text-xs text-amber-200">{actionPrompt}</div>
+                        )}
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
+
+            {/* Game Room */}
+            <div
+              className={`relative rounded-xl shadow-2xl overflow-hidden border-4 border-stone-600 ${disasterMode ? 'animate-shake' : ''}`}
+              style={{ width: GAME_WIDTH, height: GAME_HEIGHT }}
+            >
+              <svg width={GAME_WIDTH} height={GAME_HEIGHT} viewBox={`0 0 ${GAME_WIDTH} ${GAME_HEIGHT}`}>
               <defs>
                 <RoomFloor />
                 <RugTexture />
@@ -613,20 +844,50 @@ export default function CatChaosGame() {
               {/* ==================== INTERACTIVE ZONES ==================== */}
 
               {/* Food & Water Bowls */}
-              <g filter="url(#furnitureShadow)" onClick={fillFoodBowl} className="cursor-pointer">
+              <g
+                filter="url(#furnitureShadow)"
+                onClick={() => {
+                  if (!activeCatId || actionWindow) return;
+                  startActionWindow('food', activeCatId, 'food_bowl');
+                }}
+                className="cursor-pointer"
+              >
                 <FoodBowl x={50} y={400} fillLevel={zones.find(z => z.id === 'food_bowl')?.fillLevel || 0} isEmpty={zones.find(z => z.id === 'food_bowl')?.isEmpty ?? true} />
                 <ElementLabel x={80} y={460} label="Food Bowl" visible={showLabels} />
               </g>
-              <g filter="url(#furnitureShadow)" onClick={fillWaterBowl} className="cursor-pointer">
+              <g
+                filter="url(#furnitureShadow)"
+                onClick={() => {
+                  if (!activeCatId || actionWindow) return;
+                  startActionWindow('water', activeCatId, 'water_bowl');
+                }}
+                className="cursor-pointer"
+              >
                 <WaterBowl x={130} y={400} fillLevel={zones.find(z => z.id === 'water_bowl')?.fillLevel || 100} />
                 <ElementLabel x={160} y={460} label="Water Bowl" visible={showLabels} />
               </g>
 
               {/* Toys */}
               <g style={{ opacity: 0.9 }}>
-                <ToyBall x={350} y={360} />
+                <g
+                  onClick={() => {
+                    if (!activeCatId || actionWindow) return;
+                    startActionWindow('play', activeCatId, 'toy1');
+                  }}
+                  className="cursor-pointer"
+                >
+                  <ToyBall x={350} y={360} />
+                </g>
                 <ElementLabel x={370} y={405} label="Ball Toy" visible={showLabels} />
-                <YarnBall x={460} y={425} />
+                <g
+                  onClick={() => {
+                    if (!activeCatId || actionWindow) return;
+                    startActionWindow('play', activeCatId, 'toy2');
+                  }}
+                  className="cursor-pointer"
+                >
+                  <YarnBall x={460} y={425} />
+                </g>
                 <ElementLabel x={485} y={470} label="Yarn Ball" visible={showLabels} />
               </g>
 
@@ -635,7 +896,6 @@ export default function CatChaosGame() {
               {zones.filter(z => z.type === 'vase').map(zone => (
                 <g
                   key={zone.id}
-                  onClick={() => zone.isWobbling && setZones(prev => prev.map(z => z.id === zone.id ? { ...z, isWobbling: false } : z))}
                   className="cursor-pointer"
                   filter={zone.isWobbling ? "url(#dangerGlow)" : "url(#furnitureShadow)"}
                 >
@@ -657,7 +917,6 @@ export default function CatChaosGame() {
               {zones.filter(z => z.type === 'lamp').map(zone => (
                 <g
                   key={zone.id}
-                  onClick={() => zone.isWobbling && setZones(prev => prev.map(z => z.id === zone.id ? { ...z, isWobbling: false } : z))}
                   className="cursor-pointer"
                   filter={zone.isWobbling ? "url(#dangerGlow)" : "url(#furnitureShadow)"}
                 >
@@ -678,7 +937,6 @@ export default function CatChaosGame() {
               {zones.filter(z => z.type === 'mug').map(zone => (
                 <g
                   key={zone.id}
-                  onClick={() => zone.isWobbling && setZones(prev => prev.map(z => z.id === zone.id ? { ...z, isWobbling: false } : z))}
                   className="cursor-pointer"
                   filter={zone.isWobbling ? "url(#dangerGlow)" : "url(#furnitureShadow)"}
                 >
@@ -701,18 +959,19 @@ export default function CatChaosGame() {
               {cats.map(cat => {
                 const urgent = getMostUrgentNeed({ ...cat, needs: {
                   hunger: cat.needs.hunger,
+                  water: cat.needs.water,
                   play: cat.needs.play,
                   attention: cat.needs.attention,
                 }});
-
-                const isHovered = hoveredCat === cat.id;
 
                 return (
                   <g
                     key={cat.id}
                     className="cursor-pointer"
-                    onMouseEnter={() => setHoveredCat(cat.id)}
-                    onMouseLeave={() => setHoveredCat(null)}
+                    onClick={() => {
+                      if (actionWindow) return;
+                      setActiveCatId(cat.id);
+                    }}
                     style={{ zIndex: Math.floor(cat.position.y) }}
                   >
                     {/* Cat sprite */}
@@ -721,10 +980,10 @@ export default function CatChaosGame() {
                     </g>
 
                     {/* Need indicators */}
-                    <g transform={`translate(${cat.position.x - 48}, ${cat.position.y - 80})`}>
-                      <rect x="-4" y="-8" width="104" height="28" rx="14" fill="rgba(0,0,0,0.75)" />
+                    <g transform={`translate(${cat.position.x - 64}, ${cat.position.y - 80})`}>
+                      <rect x="-4" y="-8" width="136" height="28" rx="14" fill="rgba(0,0,0,0.75)" />
 
-                      {(['hunger', 'play', 'attention'] as const).map((need, i) => {
+                      {(['hunger', 'water', 'play', 'attention'] as const).map((need, i) => {
                         const value = cat.needs[need];
                         const color = getNeedFillColor(value);
                         const isCritical = value >= DISASTER_THRESHOLD;
@@ -762,42 +1021,6 @@ export default function CatChaosGame() {
                       </g>
                     )}
 
-                    {/* Action menu */}
-                    <g
-                      transform={`translate(${cat.position.x - 65}, ${cat.position.y + 40})`}
-                      style={{
-                        opacity: isHovered ? 1 : 0,
-                        transition: 'opacity 0.2s',
-                        pointerEvents: isHovered ? 'auto' : 'none',
-                      }}
-                    >
-                      <rect x="-8" y="-8" width="146" height="58" rx="10" fill="rgba(30,30,30,0.95)" stroke="#555" strokeWidth="2" />
-
-                      {/* Feed */}
-                      <g onClick={(e) => { e.stopPropagation(); fulfillNeed(cat.id, 'hunger'); }}>
-                        <rect x="0" y="0" width="40" height="42" rx="8" fill="#8B4513" className="cursor-pointer hover:fill-a0522d" />
-                        <text x="20" y="24" textAnchor="middle" fontSize="18">🍖</text>
-                        <text x="20" y="38" textAnchor="middle" fontSize="8" fill="#fff" fontWeight="bold">FEED</text>
-                      </g>
-
-                      {/* Play */}
-                      <g onClick={(e) => { e.stopPropagation(); fulfillNeed(cat.id, 'play'); }}>
-                        <rect x="46" y="0" width="40" height="42" rx="8" fill="#228b22" className="cursor-pointer hover:fill-2e8b57" />
-                        <text x="66" y="24" textAnchor="middle" fontSize="18">🎾</text>
-                        <text x="66" y="38" textAnchor="middle" fontSize="8" fill="#fff" fontWeight="bold">PLAY</text>
-                      </g>
-
-                      {/* Pet */}
-                      <g onClick={(e) => { e.stopPropagation(); fulfillNeed(cat.id, 'attention'); }}>
-                        <rect x="92" y="0" width="40" height="42" rx="8" fill="#ff69b4" className="cursor-pointer hover:fill-ff1493" />
-                        <text x="112" y="24" textAnchor="middle" fontSize="18">💕</text>
-                        <text x="112" y="38" textAnchor="middle" fontSize="8" fill="#fff" fontWeight="bold">PET</text>
-                      </g>
-
-                      {/* Divider lines */}
-                      <line x1="42" y1="4" x2="42" y2="44" stroke="#555" strokeWidth="1" />
-                      <line x1="88" y1="4" x2="88" y2="44" stroke="#555" strokeWidth="1" />
-                    </g>
                   </g>
                 );
               })}
@@ -817,6 +1040,7 @@ export default function CatChaosGame() {
               ))}
             </svg>
           </div>
+        </div>
 
           {/* Game Over */}
           {gameOver && (
@@ -838,10 +1062,11 @@ export default function CatChaosGame() {
 
           {/* Instructions */}
           <div className="mt-4 flex flex-wrap gap-6 text-sm text-stone-400 bg-stone-800/80 px-6 py-3 rounded-lg border border-stone-700">
-            <span className="flex items-center gap-2"><span className="text-lg">🐱</span> Hover → Actions</span>
-            <span className="flex items-center gap-2"><span className="text-lg">🥣</span> Click → Fill bowls</span>
-            <span className="flex items-center gap-2"><span className="text-lg">✋</span> Scold → Stop chaos</span>
-            <span className="flex items-center gap-2"><span className="text-lg">⚠️</span> Save → Click items</span>
+            <span className="flex items-center gap-2"><span className="text-lg">🐱</span> Click cat → Active</span>
+            <span className="flex items-center gap-2"><span className="text-lg">🥣</span> Click bowl → F/W</span>
+            <span className="flex items-center gap-2"><span className="text-lg">🎾</span> Click toy → P</span>
+            <span className="flex items-center gap-2"><span className="text-lg">💖</span> Pet → T</span>
+            <span className="flex items-center gap-2"><span className="text-lg">✋</span> No No → N</span>
             <span className="flex items-center gap-2"><span className="text-lg">🏷️</span> Toggle → Show Labels</span>
           </div>
         </>

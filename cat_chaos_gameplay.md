@@ -10,26 +10,13 @@ This document extends `cat_chaos_specs.md` with complete gameplay mechanics, UI 
 
 ```
 ┌─────────────────────────────────────┐
-│ 🐱 MOCHI                            │
-│ ┌─────────────────────────────────┐ │
-│ │ 😿 Hunger                       │ │
-│ │ ████████░░ 8 clicks needed      │ │
-│ │ ⏱️ 12s                         │ │
-│ └─────────────────────────────────┘ │
-│ ┌─────────────────────────────────┐ │
-│ │ 🎾 PLAY                         │ │
-│ │ ████░░░░░░░ 4/10               │ │
-│ │ ⏱️ 15s                         │ │
-│ └─────────────────────────────────┘ │
-│ ┌─────────────────────────────────┐ │
-│ │ 💜 PET                         │ │
-│ │ ██████░░░░░░ 6/10              │ │
-│ │ ⏱️ 10s                         │ │
-│ └─────────────────────────────────┘ │
+│ 🐱 MOCHI             (ACTIVE)     │
+│ 😿 Hunger              ⏱️ 12s     │
+│ ███████░░ 5 presses needed        │
+│ [ FEED ]  Click bowl + press F×5  │
+│ [ NO NO ]  Press N×4 (if active)  │
 │                                   │
-│ [🛑 NO NO] (×5 required)          │
-│                                   │
-│ Mood: 😊 ██████████░░ 85%         │
+│ Streak: ✨ 3                      │
 └─────────────────────────────────────┘
 
 Each cat card shows:
@@ -38,33 +25,63 @@ Each cat card shows:
 - Progress bar for that need
 - Countdown timer for that need
 - Primary action button (changes based on need)
-- "No No" button for disaster prevention
-- Visible mood meter
+- "No No" prompt for disaster prevention (key-based)
 ```
 
 **Right Panel Behavior:**
-- No sorting by urgency (chaos is intentional)
-- Cats appear in spawn order
+- Sort by urgency (most urgent at top)
+- Ties keep spawn order
 - Each cat has ONE primary action button (not multiple)
-- "No No" button requires rapid clicking (3-8 random clicks based on disaster severity)
+- "No No" uses the `N` key for rapid presses (see Active Cat Mode)
+- Urgent needs (≤ 5s) pulse and show a small "URGENT" tag to focus attention
+- Primary action button always initiates the action:
+  - For bowls, it highlights the active bowl and starts the click window
+  - For play, it highlights the toy area and starts the input window
+  - For pet, it highlights the Active Cat
+  - For "No No", it opens the rapid-press window
+- Clicking a cat card makes that cat the Active Cat
+- Active Cat shows a stronger highlight and an instruction line (e.g., "Press P to play")
 
 ### Game Board Actions
 
 **Food Bowl:**
-- Shows required clicks (e.g., "×6" based on hungry cats)
-- User must click bowl repeatedly to fill
+- Activates when the player clicks the bowl while a cat is Active
+- Shows required clicks (e.g., "×5" based on hungry cats)
+- User clicks the bowl once, then presses `F` rapidly to fill during the active window
+- Only one bowl action can be active at a time
 - Fail if incomplete when timer ends
 - Feedback: "+10 🍖" per successful fill
 
 **Water Bowl:**
-- Same as food bowl mechanics
+- Same as food bowl mechanics (click bowl, then press `W`)
 - Feedback: "+5 💧" per successful fill
+
+**Toy Area:**
+- Activates when the player clicks a toy while a cat is Active
+- User clicks the toy once, then presses `P` rapidly to complete play
+- Only one toy action can be active at a time
+- Fail if incomplete when timer ends
+- Feedback: "+12 🎾" per successful play
 
 **Disaster Prevention:**
 - Cat approaching fragile object → "!" appears above cat
-- Click "No No" on cat's card rapidly to prevent
-- Each "No No" press shows visual feedback (checkmark or remaining)
+- With the cat Active, press `N` rapidly to prevent
+- Each `N` press shows visual feedback (checkmark or remaining)
 - Fail = object falls, -15 points
+
+### Active Cat Mode
+- Only one cat can be Active at a time
+- Clicking a cat (card or avatar) sets Active Cat
+- Active Cat displays a clear outline + instruction text
+- Action prompts show the required presses (e.g., "Press P ×3", "Press N ×4")
+- While Active:
+-  - `P` = Play (after clicking a toy)
+-  - `T` = Pet (on the cat itself)
+-  - `N` = No No (only if disaster is active)
+-  - Clicking Food Bowl then pressing `F` serves Feed
+-  - Clicking Water Bowl then pressing `W` serves Water
+- If no Active Cat, keyboard input does nothing and a hint appears ("Select a cat")
+- Completing an action clears Active Cat so the player can select another
 
 ### Hover on Cat (Minimal Context)
 
@@ -76,7 +93,7 @@ Each cat card shows:
 ```
 
 **Shows:**
-- Thought bubble with current emotional state
+- Thought bubble with current need or intent
 - Countdown timer
 - "!" if about to cause disaster
 - No action buttons (actions taken on right panel)
@@ -118,9 +135,9 @@ Each cat card shows:
 ### Catnip Mode
 
 **Trigger:**
-- Random chance every 20-30 seconds per cat
-- Difficulty increases frequency
-- Max 2 cats in catnip mode at once
+- Only starts once there are 3+ cats in the round
+- Random chance check every 40 seconds (global)
+- Max 1 cat in catnip mode at once
 
 **Effects:**
 - Current need urgency doubles (timer runs 2x faster)
@@ -143,19 +160,30 @@ Each cat card shows:
 - Auto-advances to next round
 - Brief pause with "Round X" announcement between rounds
 
+### Pacing & Concurrency Rules
+- Only one high-APM action can be active at a time (food bowl, water bowl, "No No")
+- While a high-APM action is active, other timers pause
+- After completion, resume timers with a 1s grace buffer
+- If multiple urgent events would overlap, delay the less urgent one by 2-4s
+
 **Round Progression:**
 
-| Round | Cats | Actions per Cat | Timer Speed | Catnip Chance |
-|-------|------|-----------------|-------------|---------------|
-| 1 | 1 | 1 action (hunger) | 100% | None |
-| 2 | 1 | 2 actions (hunger + play) | 100% | None |
-| 3 | 2 | 1-2 actions each | 95% | 10% |
-| 4 | 2 | 2 actions each | 90% | 15% |
-| 5 | 3 | 2-3 actions each | 85% | 20% |
-| 6+ | 3-6 | 2-4 actions each | 80% + | 25% + |
+| Stage | Rounds | Cats | Actions per Cat | Timer Speed | Catnip |
+|-------|--------|------|-----------------|-------------|--------|
+| Intro | 1-3 | 1 | 1-2 actions | 100% | None |
+| Early | 4-8 | 2 | 2 actions | 95% | None |
+| Mid | 9-16 | 3 | 2-3 actions | 90% | 10% (40s check) |
+| Late | 17-26 | 4 | 2-4 actions | 85% | 15% (40s check) |
+| Endless | 27+ | 4 | 3-4 actions | 80% | 20% (40s check) |
+
+**Onboarding Rules (Rounds 1-3):**
+- Only one interaction surface is introduced per round
+- Disasters start at Round 4 (no "No No" before then)
+- Catnip starts at Round 9 (3 cats) and never during an urgent window
 
 **Action Types in Rounds:**
 - Hunger (food bowl)
+- Water (water bowl)
 - Play (toys)
 - Attention (pet)
 - Disaster prep (approaching fragile item - requires "No No")
@@ -164,63 +192,50 @@ Each cat card shows:
 
 | Action Type | Requirement | Points | Failure Consequence |
 |-------------|-------------|--------|---------------------|
-| Food | Complete all clicks on bowl | +10 | Cat waits, meows, mood -5 |
-| Water | Complete all clicks on bowl | +5 | Cat waits, meows, mood -5 |
-| Play | Click "Play" button | +15 | Mood -3 |
-| Pet | Click "Pet" button | +5 | Mood -3 |
-| No No | Rapid clicks (3-8) | 0 (prevents) | -15 points, item falls |
+| Food | Click bowl, then press `F` rapidly | +10 | -6 points, cat waits |
+| Water | Click bowl, then press `W` rapidly | +7 | -4 points, cat waits |
+| Play | Click toy, then press `P` rapidly | +12 | -4 points |
+| Pet | Press `T` on Active Cat | +6 | -3 points |
+| No No | Press `N` rapidly (3-5) | 0 (prevents) | Warning on first miss, break on second within 15s |
+
+**Failure Grace (Disasters):**
+- First miss triggers a warning only: -5 points, object does NOT fall
+- Second miss within 15s triggers the full break penalty
 
 ### Round Example
 
-**Round 1:**
+**Round 2:**
 - 1 cat (Mochi)
-- Action: Hunger (needs ×4 food clicks)
+- Action: Hunger (click bowl, press `F` ×4)
 - Timer: 15 seconds
-- User clicks food bowl 4 times → +10 points → Round complete
+- User completes input → +10 points → Round complete
 
-**Round 3:**
-- 2 cats (Mochi + Luna)
-- Mochi: Hunger (×4) + Disaster prep (vase)
-- Luna: Play + Attention
-- Timers: 12-18 seconds each
+**Round 9:**
+- 3 cats (Mochi + Luna + Oliver)
+- Mochi: Hunger + Disaster prep (vase)
+- Luna: Play
+- Oliver: Water
+- Timers: 10-16 seconds each
 - User must prioritize which to handle first
 
 ---
 
-## Mood Meter System
+## Score-Only System
 
-### Mood Mechanics
-
-**Visible mood meter on each cat card:**
-- Starts at 100%
-- Decreases when needs aren't met
-- Different needs affect mood differently:
-
-| Missed Need | Mood Drop | Notes |
-|-------------|-----------|-------|
-| Food (empty bowl) | -5% per check | Cat waits at bowl, meows |
-| Water (empty bowl) | -3% per check | Cat waits at bowl, meows |
-| Play (no play session) | -3% per check | Cat gets restless |
-| Attention (no pets) | -2% per check | Cat follows cursor |
-| Disaster (item falls) | -10% per item | Cat looks guilty |
-
-**Mood Recovery:**
-- Successful Food: +5%
-- Successful Water: +3%
-- Successful Play: +8%
-- Successful Pet: +5%
-- "No No" success: +2%
+**All outcomes are points-based:**
+- No mood tracking or secondary lose condition
+- Mistakes apply point penalties immediately
+- Successes apply point rewards immediately
 
 ### Game Over Conditions
 
 **Either:**
-1. Score ≤ 0 (from disasters)
-2. Any cat's mood ≤ 0 (from neglected needs)
+1. Score ≤ 0 (from penalties)
+2. Endless mode: game continues until player quits
 
 **End Game Screen:**
 - Shows final score
 - Shows rounds survived
-- Lists which cats' mood reached zero
 - "Play Again" button
 
 ---
@@ -229,18 +244,18 @@ Each cat card shows:
 
 ### Disaster Types & Requirements
 
-| Object | Click Requirement | Points Lost | Mood Drop |
-|--------|-------------------|-------------|-----------|
-| Vase | 4-6 rapid clicks | -15 | -10% |
-| Lamp | 3-5 rapid clicks | -12 | -8% |
-| Mug | 3-4 rapid clicks | -10 | -5% |
-| Plant | 3-4 rapid clicks | -8 | -5% |
-| Food Counter | 5-7 rapid clicks | -12 | -10% |
+| Object | `N` Press Requirement | Points Lost |
+|--------|------------------------|-------------|
+| Vase | 4-6 rapid presses | -15 |
+| Lamp | 3-5 rapid presses | -12 |
+| Mug | 3-4 rapid presses | -10 |
+| Plant | 3-4 rapid presses | -8 |
+| Food Counter | 5-7 rapid presses | -12 |
 
-**Click Requirement Determination:**
+**Press Requirement Determination:**
 - Randomly generated when disaster triggers
 - Based on object fragility (vase = most fragile)
-- Difficulty increases minimum clicks
+- Difficulty increases minimum presses
 
 ### Disaster Triggering
 
@@ -248,8 +263,8 @@ Each cat card shows:
 1. "!" appears above cat
 2. Thought bubble shows intent ("😼 Break things!")
 3. Object starts subtly shaking
-4. Countdown appears (5 seconds to respond)
-5. If "No No" clicks incomplete → disaster
+4. Countdown appears (6-8 seconds to respond)
+5. If required `N` presses incomplete → disaster
 
 **After Disaster:**
 - Object falls (visual: rotated/faded)
@@ -307,7 +322,7 @@ Recent Events:
 │  │ Cats Fed: 4                     ││
 │  │ Items Protected: 7              ││
 │  │ Items Broken: 2 (-30 pts)       ││
-│  │ Mood Restored: 12               ││
+│  │ Perfect Streaks: 3              ││
 │  └─────────────────────────────────┘│
 │                                     │
 │  [▶️ RESUME]    [🔄 RESTART]        │
@@ -329,25 +344,35 @@ Recent Events:
 
 **Progressive difficulty as rounds increase:**
 
-| Factor | Round 1-2 | Round 3-4 | Round 5+ |
-|--------|-----------|-----------|----------|
-| Max cats | 1 | 2 | 3-6 |
-| Actions per cat | 1-2 | 2-3 | 2-4 |
-| Timer speed | 100% | 90% | 80% |
-| Catnip frequency | None | 15% | 25% |
-| "No No" clicks | 3-4 | 4-6 | 5-8 |
-| Food bowl clicks | 3-4 | 4-6 | 5-8 |
-| Disaster chance | Low | Medium | High |
+| Factor | Rounds 1-3 | Rounds 4-8 | Rounds 9-16 | Rounds 17-26 | Rounds 27+ |
+|--------|------------|------------|-------------|--------------|------------|
+| Max cats | 1 | 2 | 3 | 4 | 4 |
+| Actions per cat | 1-2 | 2 | 2-3 | 2-4 | 3-4 |
+| Timer speed | 100% | 95% | 90% | 85% | 80% |
+| Catnip frequency | None | None | 10% (40s) | 15% (40s) | 20% (40s) |
+| "No No" presses | 3-4 | 3-4 | 4-5 | 4-5 | 5-6 |
+| Bowl presses | 3-4 | 3-4 | 4-5 | 4-5 | 5-6 |
+| Disaster chance | Low | Medium | Medium | High | High |
 
 **Catnip Mode Scaling:**
-- Rounds 1-2: Never
-- Rounds 3-4: 15% chance per cat
-- Rounds 5+: 25% chance per cat
-- Max 2 cats in catnip at once
+- Only when there are 3+ cats
+- Global chance check every 40 seconds
+- Max 1 cat in catnip at once
+- Catnip does not trigger if any cat has an urgent timer (≤ 5s)
+
+### Adaptive Difficulty (Fail-Safe)
+- If the player misses 2 actions within 30s, extend all timers by +10% for 20s
+- If the player drops below 10 points, reduce new action spawns by 1 for the next round
+- If the player succeeds 5 actions in a row, revert to normal pacing
 
 ---
 
 ## Thought Bubble System
+
+**Design Guidance:**
+- Right panel is the source of truth for needs and actions
+- Thought bubbles mirror the current need/intent for flavor and quick glance
+- No new information is introduced in bubbles (avoid extra cognitive load)
 
 ### Bubble Triggers & Content
 
@@ -361,8 +386,6 @@ Recent Events:
 | Catnip | "😵‍💫 Woohoo!" / "🚀 Fast!" | Shows altered state |
 | Scolded | "😿 Nooo..." | Shows correction received |
 | After disaster | "😿 Sorry..." | Guilt indicator |
-| Mood low | "😾 Grumpy..." | Warns mood is dropping |
-| Mood critical | "🙀 Help!" | Urgent mood warning |
 
 ### Bubble Behavior
 - Appears above cat
@@ -382,10 +405,9 @@ Recent Events:
 - [ ] Cat movement toward targets
 - [ ] Basic timer system
 - [ ] Score display and logging
-- [ ] Mood meter visible
 
 ### Phase 2: Disaster System
-- [ ] "No No" button per cat
+- [ ] "No No" action per cat
 - [ ] Disaster triggering and prevention
 - [ ] Object falling animation
 - [ ] Click timing requirement
@@ -403,11 +425,11 @@ Recent Events:
 
 | Action | Location | How to Complete |
 |--------|----------|-----------------|
-| Feed cat | Game board (food bowl) | Click bowl × required clicks |
-| Fill water | Game board (water bowl) | Click bowl × required clicks |
-| Play with cat | Right panel (cat card) | Click "🎾 PLAY" button |
-| Pet cat | Right panel (cat card) | Click "💜 PET" button |
-| Prevent disaster | Right panel (cat card) | Click "🛑 NO NO" rapidly × N times |
+| Feed cat | Game board (bowl) | Click bowl, then press `F` rapidly × required |
+| Fill water | Game board (bowl) | Click bowl, then press `W` rapidly × required |
+| Play with cat | Active cat | Press `P` |
+| Pet cat | Active cat | Press `T` |
+| Prevent disaster | Active cat | Press `N` rapidly × required |
 | See cat state | Hover on cat | Thought bubble appears |
 | Pause game | Top right button | Click "⏸️ PAUSE" |
 | View score | Top center | Always visible |

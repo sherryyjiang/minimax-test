@@ -530,9 +530,8 @@ export function CoffeeTable({ x, y }: { x: number; y: number }) {
 
 // Vase with depth
 export function Vase({ x, y, isWobbling = false, isFallen = false }: { x: number; y: number; isWobbling?: boolean; isFallen?: boolean }) {
-  const rotation = isFallen ? 85 : 0;
   const wobbleTransform = isWobbling
-    ? `rotate(${Math.sin(Date.now() / 80) * 12}, ${x + 22}, ${y + 35})`
+    ? `rotate(8, ${x + 22}, ${y + 35})`
     : '';
 
   return (
@@ -595,9 +594,8 @@ export function Vase({ x, y, isWobbling = false, isFallen = false }: { x: number
 
 // Table Lamp
 export function TableLamp({ x, y, isWobbling = false, isFallen = false }: { x: number; y: number; isWobbling?: boolean; isFallen?: boolean }) {
-  const rotation = isFallen ? 85 : 0;
   const wobbleTransform = isWobbling
-    ? `rotate(${Math.sin(Date.now() / 80) * 12}, ${x + 22}, ${y + 40})`
+    ? `rotate(8, ${x + 22}, ${y + 40})`
     : '';
 
   return (
@@ -649,9 +647,8 @@ export function TableLamp({ x, y, isWobbling = false, isFallen = false }: { x: n
 
 // Coffee Mug
 export function CoffeeMug({ x, y, isWobbling = false, isFallen = false }: { x: number; y: number; isWobbling?: boolean; isFallen?: boolean }) {
-  const rotation = isFallen ? 85 : 0;
   const wobbleTransform = isWobbling
-    ? `rotate(${Math.sin(Date.now() / 80) * 15}, ${x + 18}, ${y + 25})`
+    ? `rotate(10, ${x + 18}, ${y + 25})`
     : '';
 
   return (
