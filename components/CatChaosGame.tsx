@@ -1,6 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  RoomElements, WoodFloor, Window, CatTree,
+  FoodBowl, WaterBowl, Rug, Bookshelf, Sofa, DiningTable,
+  Vase, TableLamp, CoffeeMug, Plant, ToyBall, YarnBall,
+  CatSprite, WindowPlant, SisalPattern, RoomBackground,
+  BackWall, SideWalls, RealisticFloor, ElementLabel
+} from './RoomAssets';
 
 // Types
 interface Cat {
@@ -23,12 +30,12 @@ interface Cat {
 
 interface Zone {
   id: string;
-  type: 'food_bowl' | 'water_bowl' | 'play' | 'vase' | 'plant' | 'lamp' | 'cat_tree' | 'window' | 'sofa' | 'rug';
+  type: 'food_bowl' | 'water_bowl' | 'play_zone' | 'vase' | 'lamp' | 'cat_tree' | 'plant' | 'mug' | 'toy' | 'window' | 'sofa' | 'rug' | 'bookshelf';
   emoji: string;
-  furnitureEmoji: string;
   position: { x: number; y: number };
   width: number;
   height: number;
+  label: string;
   isWobbling?: boolean;
   isFallen?: boolean;
   isEmpty?: boolean;
@@ -45,76 +52,88 @@ interface Popup {
 // Constants
 const GAME_WIDTH = 700;
 const GAME_HEIGHT = 550;
-const CAT_SPEED = 1.2;
-const WANDER_SPEED = 0.3;
-const NEED_INCREMENT = 0.5;
+const CAT_SPEED = 1.0;
+const WANDER_SPEED = 0.25;
+const NEED_INCREMENT = 0.4;
 const DISASTER_THRESHOLD = 65;
 const SCOLD_DURATION = 2000;
-const SCOLD_RECOVERY = 5000;
 
-// Cat personalities with colors
+// Cat data
 const CATS = [
-  { name: 'Mochi', emoji: '🐱', color: 'from-orange-300 to-orange-400', personality: 'balanced' },
-  { name: 'Luna', emoji: '🐈', color: 'from-gray-300 to-gray-400', personality: 'calm' },
-  { name: 'Oliver', emoji: '😺', color: 'from-yellow-300 to-yellow-400', personality: 'playful' },
-  { name: 'Bella', emoji: '😸', color: 'from-pink-300 to-pink-400', personality: 'energetic' },
-  { name: 'Leo', emoji: '😼', color: 'from-amber-300 to-amber-400', personality: 'mischievous' },
-  { name: 'Milo', emoji: '😽', color: 'from-cream-300 to-cream-400', personality: 'clingy' },
+  { name: 'Mochi', emoji: '🐱', color: 'orange', personality: 'balanced' },
+  { name: 'Luna', emoji: '🐈', color: 'gray', personality: 'calm' },
+  { name: 'Oliver', emoji: '😺', color: 'yellow', personality: 'playful' },
+  { name: 'Bella', emoji: '😸', color: 'pink', personality: 'energetic' },
+  { name: 'Leo', emoji: '😼', color: 'amber', personality: 'mischievous' },
+  { name: 'Milo', emoji: '😽', color: 'cream', personality: 'clingy' },
 ];
 
-// Room layout with furniture
+// Room layout with labels for educational purposes
 const ROOM_ZONES: Zone[] = [
-  // Window with plant
-  { id: 'window', type: 'window', emoji: '🪟', furnitureEmoji: '🪴', position: { x: 100, y: 60 }, width: 80, height: 50 },
-  { id: 'plant1', type: 'plant', emoji: '🌿', furnitureEmoji: '', position: { x: 70, y: 100 }, width: 40, height: 40 },
-  { id: 'plant2', type: 'plant', emoji: '🌵', furnitureEmoji: '', position: { x: 160, y: 100 }, width: 40, height: 40 },
+  // Back wall elements
+  { id: 'window', type: 'window', emoji: '🪟', position: { x: 80, y: 25 }, width: 120, height: 55, label: 'Window' },
 
-  // Cat tree (play zone)
-  { id: 'cattree', type: 'cat_tree', emoji: '🧶', furnitureEmoji: '🏰', position: { x: 350, y: 80 }, width: 60, height: 60 },
+  // Plants
+  { id: 'plant1', type: 'plant', emoji: '🌿', position: { x: 30, y: 70 }, width: 45, height: 45, label: 'Potted Plant' },
+  { id: 'plant2', type: 'plant', emoji: '🌵', position: { x: 190, y: 70 }, width: 45, height: 45, label: 'Cactus' },
 
-  // Sofa
-  { id: 'sofa', type: 'sofa', emoji: '🛋️', furnitureEmoji: '', position: { x: 550, y: 50 }, width: 120, height: 50 },
+  // Cat tree (larger, more prominent)
+  { id: 'cattree', type: 'cat_tree', emoji: '🏰', position: { x: 350, y: 15 }, width: 100, height: 110, label: 'Cat Tower' },
 
-  // Rug in center
-  { id: 'rug', type: 'rug', emoji: '', furnitureEmoji: '🟫', position: { x: 300, y: 250 }, width: 150, height: 80 },
+  // Sofa (larger)
+  { id: 'sofa', type: 'sofa', emoji: '🛋️', position: { x: 520, y: 20 }, width: 160, height: 80, label: 'Sofa' },
+
+  // Rug (center floor)
+  { id: 'rug', type: 'rug', emoji: '', position: { x: 280, y: 200 }, width: 180, height: 120, label: 'Area Rug' },
+
+  // Bookshelf
+  { id: 'bookshelf', type: 'bookshelf', emoji: '📚', position: { x: 580, y: 160 }, width: 100, height: 80, label: 'Bookshelf' },
+
+  // Vases on bookshelf
+  { id: 'vase1', type: 'vase', emoji: '🏺', position: { x: 590, y: 110 }, width: 45, height: 55, label: 'Flower Vase' },
+  { id: 'vase2', type: 'vase', emoji: '⚱️', position: { x: 650, y: 115 }, width: 40, height: 50, label: 'Decorative Vase' },
+
+  // Table and items
+  { id: 'table', type: 'sofa', emoji: '🪑', position: { x: 230, y: 120 }, width: 90, height: 70, label: 'Coffee Table' },
+  { id: 'lamp', type: 'lamp', emoji: '💡', position: { x: 240, y: 90 }, width: 40, height: 55, label: 'Table Lamp' },
+  { id: 'mug', type: 'mug', emoji: '☕', position: { x: 280, y: 95 }, width: 35, height: 40, label: 'Coffee Mug' },
 
   // Food area
-  { id: 'food_bowl', type: 'food_bowl', emoji: '🍖', furnitureEmoji: '🥣', position: { x: 80, y: 380 }, width: 50, height: 40, isEmpty: true, fillLevel: 0 },
-  { id: 'water_bowl', type: 'water_bowl', emoji: '💧', furnitureEmoji: '🥛', position: { x: 150, y: 380 }, width: 50, height: 40, isEmpty: false, fillLevel: 100 },
+  { id: 'food_bowl', type: 'food_bowl', emoji: '🍖', position: { x: 60, y: 400 }, width: 55, height: 45, label: 'Food Bowl' },
+  { id: 'water_bowl', type: 'water_bowl', emoji: '💧', position: { x: 140, y: 400 }, width: 55, height: 45, label: 'Water Bowl' },
 
-  // Bookshelf with vase
-  { id: 'shelf', type: 'window', emoji: '📚', furnitureEmoji: '', position: { x: 600, y: 180 }, width: 70, height: 40 },
-  { id: 'vase', type: 'vase', emoji: '🏺', furnitureEmoji: '', position: { x: 610, y: 130 }, width: 40, height: 40, isWobbling: false, isFallen: false },
-
-  // Lamp
-  { id: 'lamp', type: 'lamp', emoji: '💡', furnitureEmoji: '🪔', position: { x: 500, y: 200 }, width: 40, height: 40, isWobbling: false, isFallen: false },
-
-  // More zones
-  { id: 'toy1', type: 'play', emoji: '🎾', furnitureEmoji: '', position: { x: 350, y: 350 }, width: 35, height: 35 },
-  { id: 'toy2', type: 'play', emoji: '🧶', furnitureEmoji: '', position: { x: 450, y: 400 }, width: 35, height: 35 },
-
-  // Second vase on shelf
-  { id: 'vase2', type: 'vase', emoji: '⚱️', furnitureEmoji: '', position: { x: 620, y: 140 }, width: 40, height: 40, isWobbling: false, isFallen: false },
-
-  // Table with mug
-  { id: 'table', type: 'sofa', emoji: '🪑', furnitureEmoji: '', position: { x: 250, y: 150 }, width: 50, height: 40 },
-  { id: 'mug', type: 'lamp', emoji: '☕', furnitureEmoji: '', position: { x: 255, y: 120 }, width: 30, height: 30, isWobbling: false, isFallen: false },
+  // Toys
+  { id: 'toy1', type: 'toy', emoji: '🎾', position: { x: 360, y: 360 }, width: 35, height: 35, label: 'Ball Toy' },
+  { id: 'toy2', type: 'toy', emoji: '🧶', position: { x: 470, y: 420 }, width: 35, height: 35, label: 'Yarn Ball' },
 ];
 
-// Get random spawn position
+// Random spawn positions
 const getRandomSpawnPosition = (): { x: number; y: number } => {
   const spawnAreas = [
-    { x: 250, y: 300 },  // Center rug
-    { x: 400, y: 350 },  // Near toys
-    { x: 150, y: 300 },  // Near food
-    { x: 500, y: 300 },  // Near sofa
-    { x: 350, y: 200 },  // Center room
+    { x: 370, y: 300 },  // On/near rug
+    { x: 450, y: 380 },  // Near toys
+    { x: 130, y: 360 },  // Near food
+    { x: 550, y: 350 },  // Near sofa area
+    { x: 370, y: 250 },  // Center room
   ];
   const area = spawnAreas[Math.floor(Math.random() * spawnAreas.length)];
   return {
-    x: area.x + (Math.random() - 0.5) * 100,
-    y: area.y + (Math.random() - 0.5) * 60,
+    x: area.x + (Math.random() - 0.5) * 80,
+    y: area.y + (Math.random() - 0.5) * 50,
   };
+};
+
+// Need colors
+const NEED_COLORS = {
+  hunger: { low: '#22c55e', med: '#eab308', high: '#f97316', critical: '#ef4444' },
+  play: { low: '#22c55e', med: '#eab308', high: '#f97316', critical: '#ef4444' },
+  attention: { low: '#22c55e', med: '#eab308', high: '#f97316', critical: '#ef4444' },
+};
+
+const NEED_ICONS = {
+  hunger: '🍖',
+  play: '🧶',
+  attention: '💕',
 };
 
 export default function CatChaosGame() {
@@ -126,6 +145,7 @@ export default function CatChaosGame() {
   const [popups, setPopups] = useState<Popup[]>([]);
   const [disasterMode, setDisasterMode] = useState(false);
   const [hoveredCat, setHoveredCat] = useState<string | null>(null);
+  const [showLabels, setShowLabels] = useState(false); // Toggle for educational labels
   const gameLoopRef = useRef<number>();
   const catIdRef = useRef(0);
 
@@ -148,29 +168,19 @@ export default function CatChaosGame() {
     return needs.sort((a, b) => b.value - a.value)[0];
   };
 
-  // Get need color
-  const getNeedColor = (value: number): string => {
-    if (value < 30) return 'bg-green-400';
-    if (value < 50) return 'bg-yellow-400';
-    if (value < DISASTER_THRESHOLD) return 'bg-orange-400';
-    return 'bg-red-500 animate-pulse';
-  };
-
-  // Get need icon
-  const getNeedIcon = (type: string): string => {
-    switch (type) {
-      case 'hunger': return '🍖';
-      case 'play': return '🧶';
-      case 'attention': return '💕';
-      default: return '❓';
-    }
+  // Get need color based on level
+  const getNeedFillColor = (value: number): string => {
+    if (value < 30) return NEED_COLORS.hunger.low;
+    if (value < 50) return NEED_COLORS.hunger.med;
+    if (value < DISASTER_THRESHOLD) return NEED_COLORS.hunger.high;
+    return NEED_COLORS.hunger.critical;
   };
 
   // Fill food bowl
   const fillFoodBowl = () => {
     setZones(prev => prev.map(z => {
       if (z.id === 'food_bowl') {
-        addPopup(z.position.x + 25, z.position.y - 10, '+5 🍖');
+        addPopup(z.position.x + 27, z.position.y - 15, '+5 🍖');
         setScore(s => Math.min(s + 5, 200));
         return { ...z, isEmpty: false, fillLevel: 100 };
       }
@@ -182,9 +192,9 @@ export default function CatChaosGame() {
   const fillWaterBowl = () => {
     setZones(prev => prev.map(z => {
       if (z.id === 'water_bowl') {
-        addPopup(z.position.x + 25, z.position.y - 10, '+3 💧');
+        addPopup(z.position.x + 27, z.position.y - 15, '+3 💧');
         setScore(s => Math.min(s + 3, 200));
-        return { ...z, isEmpty: false, fillLevel: 100 };
+        return { ...z, fillLevel: 100 };
       }
       return z;
     }));
@@ -194,7 +204,7 @@ export default function CatChaosGame() {
   const scoldCat = (catId: string) => {
     setCats(prev => prev.map(cat => {
       if (cat.id !== catId) return cat;
-      addPopup(cat.position.x, cat.position.y - 40, 'No No! ✋');
+      addPopup(cat.position.x, cat.position.y - 50, 'No No! ✋');
       setScore(s => s + 2);
       return { ...cat, state: 'scolded', lastMoveTime: Date.now() };
     }));
@@ -213,7 +223,7 @@ export default function CatChaosGame() {
         case 'attention': points = 5; actionText = '+5 💕'; break;
       }
 
-      addPopup(cat.position.x, cat.position.y - 30, actionText);
+      addPopup(cat.position.x, cat.position.y - 35, actionText);
       setScore(s => s + points);
 
       return {
@@ -277,7 +287,7 @@ export default function CatChaosGame() {
           lastMoveTime: Date.now(),
         };
         setCats(prev => [...prev, newCat]);
-        addPopup(pos.x, pos.y - 20, `+1 ${catTemplate.emoji}`);
+        addPopup(pos.x, pos.y - 25, `+1 ${catTemplate.emoji}`);
         catIdRef.current++;
       }
     }, 25000);
@@ -285,7 +295,7 @@ export default function CatChaosGame() {
     return () => clearInterval(interval);
   }, [gameStarted, gameOver, addPopup]);
 
-  // Game loop
+  // Game loop (same as before)
   useEffect(() => {
     if (!gameStarted || gameOver) return;
 
@@ -295,7 +305,6 @@ export default function CatChaosGame() {
         let disasterOccurred = false;
 
         const updatedCats = prevCats.map(cat => {
-          // Check if scolded - skip movement
           if (cat.state === 'scolded') {
             if (Date.now() - cat.lastMoveTime > SCOLD_DURATION) {
               return { ...cat, state: 'idle', target: null };
@@ -303,22 +312,19 @@ export default function CatChaosGame() {
             return cat;
           }
 
-          // Increase needs
           const newNeeds = {
             hunger: Math.min(100, cat.needs.hunger + NEED_INCREMENT),
             play: Math.min(100, cat.needs.play + NEED_INCREMENT),
             attention: Math.min(100, cat.needs.attention + NEED_INCREMENT),
           };
 
-          // Check most urgent need
           const urgent = getMostUrgentNeed({ ...cat, needs: newNeeds });
           let newPosition = { ...cat.position };
           let newTarget = cat.target;
           let newVelocity = { ...cat.velocity };
           const now = Date.now();
 
-          // If idle and enough time passed, wander randomly
-          if (cat.state === 'idle' && now - cat.lastMoveTime > 3000 && Math.random() < 0.02) {
+          if (cat.state === 'idle' && now - cat.lastMoveTime > 4000 && Math.random() < 0.015) {
             const wanderAngle = Math.random() * Math.PI * 2;
             newVelocity = {
               x: Math.cos(wanderAngle) * WANDER_SPEED,
@@ -327,12 +333,10 @@ export default function CatChaosGame() {
             newTarget = null;
           }
 
-          // If urgent need, move toward zone
           if (urgent.value > DISASTER_THRESHOLD && cat.state === 'idle' && urgent.zone) {
             if (!cat.target) {
-              // Add some randomness so cats don't all go to exact same spot
-              const offsetX = (Math.random() - 0.5) * 40;
-              const offsetY = (Math.random() - 0.5) * 30;
+              const offsetX = (Math.random() - 0.5) * 35;
+              const offsetY = (Math.random() - 0.5) * 25;
               newTarget = {
                 x: urgent.zone.position.x + urgent.zone.width / 2 + offsetX,
                 y: urgent.zone.position.y + urgent.zone.height / 2 + offsetY,
@@ -340,7 +344,6 @@ export default function CatChaosGame() {
             }
           }
 
-          // Move toward target
           if (newTarget && cat.state === 'idle') {
             const dx = newTarget.x - cat.position.x;
             const dy = newTarget.y - cat.position.y;
@@ -353,13 +356,12 @@ export default function CatChaosGame() {
                 y: cat.position.y + (dy / dist) * speed,
               };
             } else {
-              // Reached target - check interactions
               const zone = zones.find(z =>
-                Math.abs(z.position.x - newTarget.x + (z.width || 0)/2) < 50 &&
-                Math.abs(z.position.y - newTarget.y + (z.height || 0)/2) < 50
+                Math.abs(z.position.x + (z.width || 0)/2 - newTarget.x) < 50 &&
+                Math.abs(z.position.y + (z.height || 0)/2 - newTarget.y) < 50
               );
 
-              if (zone && zone.type === 'vase' || zone.type === 'lamp' || zone.type === 'mug') {
+              if (zone && (zone.type === 'vase' || zone.type === 'lamp' || zone.type === 'mug')) {
                 setZones(prevZ => prevZ.map(z => {
                   if (z.id === zone.id && !z.isWobbling && !z.isFallen) {
                     return { ...z, isWobbling: true };
@@ -368,12 +370,11 @@ export default function CatChaosGame() {
                 }));
               }
 
-              // If reached food bowl and it's filled, eat
               if (zone?.type === 'food_bowl' && !zone.isEmpty) {
                 newNeeds.hunger = Math.max(0, newNeeds.hunger - 40);
                 setZones(prevZ => prevZ.map(z => {
                   if (z.id === 'food_bowl') {
-                    const newLevel = (z.fillLevel || 0) - 30;
+                    const newLevel = (z.fillLevel || 0) - 35;
                     if (newLevel <= 0) return { ...z, fillLevel: 0, isEmpty: true };
                     return { ...z, fillLevel: newLevel };
                   }
@@ -381,7 +382,6 @@ export default function CatChaosGame() {
                 }));
                 newTarget = null;
               } else if (zone?.type === 'food_bowl' && zone.isEmpty) {
-                // Wait at empty bowl
                 newTarget = null;
               }
 
@@ -391,16 +391,14 @@ export default function CatChaosGame() {
             }
           }
 
-          // Apply wandering velocity
           if (newVelocity.x !== 0 || newVelocity.y !== 0) {
             newPosition = {
-              x: Math.max(30, Math.min(GAME_WIDTH - 30, cat.position.x + newVelocity.x)),
-              y: Math.max(30, Math.min(GAME_HEIGHT - 30, cat.position.y + newVelocity.y)),
+              x: Math.max(50, Math.min(GAME_WIDTH - 50, cat.position.x + newVelocity.x)),
+              y: Math.max(90, Math.min(GAME_HEIGHT - 50, cat.position.y + newVelocity.y)),
             };
-            // Decay velocity
             newVelocity = {
-              x: newVelocity.x * 0.98,
-              y: newVelocity.y * 0.98,
+              x: newVelocity.x * 0.97,
+              y: newVelocity.y * 0.97,
             };
           }
 
@@ -414,10 +412,9 @@ export default function CatChaosGame() {
           };
         });
 
-        // Check wobbling zones
         zones.forEach(zone => {
           if (zone.isWobbling && !zone.isFallen) {
-            if (Math.random() < 0.015) {
+            if (Math.random() < 0.012) {
               setZones(prevZ => prevZ.map(z => {
                 if (z.id === zone.id) {
                   disasterOccurred = true;
@@ -435,7 +432,6 @@ export default function CatChaosGame() {
           setTimeout(() => setDisasterMode(false), 400);
         }
 
-        // Check game over
         if (newScore <= 0) {
           setGameOver(true);
           return prevCats;
@@ -466,28 +462,29 @@ export default function CatChaosGame() {
   }, [gameStarted, gameOver]);
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-stone-200 to-stone-300 p-4">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-stone-800 to-stone-900 p-4">
       {/* Title */}
       <div className="mb-4 text-center">
-        <h1 className="text-4xl font-bold text-stone-800 drop-shadow-sm">🐱 Cat Chaos Mansion</h1>
-        <p className="text-stone-600 text-sm">Keep your cats happy and your valuables safe!</p>
+        <h1 className="text-4xl font-bold text-amber-200 drop-shadow-lg">Cat Chaos Mansion</h1>
+        <p className="text-stone-400 text-sm">Keep your cats happy and your valuables safe!</p>
       </div>
 
       {!gameStarted ? (
-        <div className="flex flex-col items-center gap-4 bg-white/80 p-8 rounded-2xl shadow-xl">
-          <div className="text-6xl mb-4">🏠🐱</div>
-          <p className="text-stone-700 text-center max-w-md">
-            Your cats are hungry, bored, and needy! Feed them 🍖, play with them 🎾,
-            give them attention 💕, and protect your stuff from their chaos!
+        <div className="flex flex-col items-center gap-6 bg-stone-800/90 p-10 rounded-2xl shadow-2xl border border-stone-700">
+          <div className="text-7xl mb-2">🏠🐱</div>
+          <p className="text-stone-200 text-center max-w-md text-lg">
+            Your cats are hungry, bored, and needy! Feed them, play with them,
+            give them attention, and protect your stuff from chaos!
           </p>
-          <ul className="text-stone-600 text-sm text-left space-y-1">
-            <li>🌱 Fill food bowl before cats arrive!</li>
-            <li>✋ Say &quot;No No!&quot; to stop cats from knocking things</li>
-            <li>🎾 Click toys to play, cats near cat tree want to play!</li>
-          </ul>
+          <div className="grid grid-cols-2 gap-4 text-stone-300 text-sm">
+            <div className="flex items-center gap-2"><span className="text-2xl">🥣</span> Click bowls to fill</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">✋</span> Say "No No!" to scold</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">⚠️</span> Click to save items!</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">🏰</span> Cats love cat tower!</div>
+          </div>
           <button
             onClick={startGame}
-            className="px-8 py-4 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xl font-bold rounded-xl hover:from-amber-600 hover:to-orange-600 transition-all shadow-lg transform hover:scale-105"
+            className="px-10 py-4 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xl font-bold rounded-xl hover:from-amber-600 hover:to-orange-600 transition-all shadow-lg transform hover:scale-105"
           >
             Start Game
           </button>
@@ -495,312 +492,333 @@ export default function CatChaosGame() {
       ) : (
         <>
           {/* HUD */}
-          <div className="flex gap-6 mb-3 bg-white/90 px-6 py-2 rounded-full shadow-md">
-            <div className={`text-2xl font-bold ${score <= 25 ? 'text-red-600 animate-pulse' : 'text-stone-800'}`}>
-              ⭐ {score}
+          <div className="flex gap-6 mb-3 bg-stone-800/90 px-6 py-2 rounded-full shadow-lg border border-stone-700 items-center">
+            <div className={`text-2xl font-bold ${score <= 25 ? 'text-red-400 animate-pulse' : 'text-amber-300'}`}>
+              {score}
             </div>
-            <div className="text-stone-600 flex items-center gap-2">
-              <span>🐱</span>
-              <span className="font-semibold">{cats.length}</span>
+            <div className="text-stone-400 flex items-center gap-2">
+              <span className="text-xl">🐱</span>
+              <span className="font-semibold text-stone-200">{cats.length}</span>
             </div>
-            <div className="text-amber-600 text-sm flex items-center">
-              💡 Fill bowls + Secure items = Points!
-            </div>
+            <div className="h-6 w-px bg-stone-600" />
+            <button
+              onClick={() => setShowLabels(!showLabels)}
+              className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
+                showLabels ? 'bg-amber-500 text-white' : 'bg-stone-700 text-stone-300 hover:bg-stone-600'
+              }`}
+            >
+              {showLabels ? 'Hide Labels' : 'Show Labels'}
+            </button>
           </div>
 
-          {/* Game Area - The Room */}
+          {/* Game Room */}
           <div
-            className={`relative rounded-2xl shadow-2xl overflow-hidden border-8 border-stone-400 ${disasterMode ? 'animate-shake' : ''}`}
+            className={`relative rounded-xl shadow-2xl overflow-hidden border-4 border-stone-600 ${disasterMode ? 'animate-shake' : ''}`}
             style={{ width: GAME_WIDTH, height: GAME_HEIGHT }}
           >
-            {/* Floor pattern */}
-            <div
-              className="absolute inset-0 opacity-30"
-              style={{
-                backgroundImage: `radial-gradient(circle at 25% 25%, #d4c4a8 2px, transparent 2px),
-                                  radial-gradient(circle at 75% 75%, #c9b896 2px, transparent 2px)`,
-                backgroundSize: '40px 40px',
-              }}
-            />
+            <svg width={GAME_WIDTH} height={GAME_HEIGHT} viewBox={`0 0 ${GAME_WIDTH} ${GAME_HEIGHT}`}>
+              <defs>
+                <RealisticFloor />
+                <SisalPattern />
 
-            {/* Floor color */}
-            <div className="absolute inset-0 bg-gradient-to-br from-amber-100 via-amber-50 to-orange-100" />
+                {/* Red glow for danger items */}
+                <filter id="dangerGlow" x="-50%" y="-50%" width="200%" height="200%">
+                  <feGaussianBlur stdDeviation="4" result="coloredBlur" />
+                  <feMerge>
+                    <feMergeNode in="coloredBlur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
 
-            {/* Walls hint */}
-            <div className="absolute top-0 left-0 right-0 h-4 bg-gradient-to-b from-stone-300 to-transparent opacity-50" />
+                {/* Lighting gradient */}
+                <radialGradient id="roomLight" cx="50%" cy="40%" r="70%">
+                  <stop offset="0%" stopColor="#fff8e7" stopOpacity="0.05" />
+                  <stop offset="100%" stopColor="#1a1a1a" stopOpacity="0" />
+                </radialGradient>
 
-            {/* Room Elements - Furniture Layer */}
-            {zones.map(zone => {
-              // Skip interactive zones - render them separately
-              if (zone.type === 'food_bowl' || zone.type === 'water_bowl' || zone.isWobbling !== undefined) return null;
+                {/* Cat shadow */}
+                <filter id="catShadow" x="-50%" y="-50%" width="200%" height="200%">
+                  <feDropShadow dx="0" dy="4" stdDeviation="4" floodColor="#000" floodOpacity="0.35" />
+                </filter>
 
-              return (
-                <div
+                {/* Furniture shadow */}
+                <filter id="furnitureShadow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feDropShadow dx="4" dy="5" stdDeviation="5" floodColor="#000" floodOpacity="0.25" />
+                </filter>
+              </defs>
+
+              {/* Room Background Image */}
+              <RoomBackground imageUrl="/room-bg.png" />
+
+              {/* Floor with slight transparency to show background */}
+              <rect width={GAME_WIDTH} height={GAME_HEIGHT} fill="url(#realisticFloor)" style={{ opacity: 0.7 }} />
+
+              {/* Back Wall with picture and lamp */}
+              <BackWall width={GAME_WIDTH} height={GAME_HEIGHT} />
+
+              {/* Side Walls */}
+              <SideWalls width={GAME_WIDTH} height={GAME_HEIGHT} />
+
+              {/* Lighting overlay */}
+              <rect width={GAME_WIDTH} height={GAME_HEIGHT} fill="url(#roomLight)" pointerEvents="none" />
+
+              {/* ==================== ROOM FURNITURE LAYER ==================== */}
+
+              {/* Window */}
+              <g filter="url(#furnitureShadow)">
+                <Window x={60} y={20} width={140} height={60} />
+                <ElementLabel x={130} y={90} label="Window" visible={showLabels} />
+              </g>
+
+              {/* Plants near window */}
+              <g filter="url(#furnitureShadow)">
+                <Plant x={25} y={65} type="fern" />
+                <ElementLabel x={50} y={120} label="Fern" visible={showLabels} />
+                <Plant x={195} y={65} type="cactus" />
+                <ElementLabel x={215} y={120} label="Cactus" visible={showLabels} />
+              </g>
+
+              {/* Cat Tree */}
+              <g filter="url(#furnitureShadow)">
+                <CatTree x={340} y={5} />
+                <ElementLabel x={390} y={130} label="Cat Tower" visible={showLabels} />
+              </g>
+
+              {/* Sofa */}
+              <g filter="url(#furnitureShadow)">
+                <Sofa x={510} y={15} width={175} height={90} />
+                <ElementLabel x={595} y={115} label="Sofa" visible={showLabels} />
+              </g>
+
+              {/* Rug */}
+              <g filter="url(#furnitureShadow)" style={{ opacity: 0.85 }}>
+                <Rug x={270} y={190} width={190} height={130} color="#8B0000" />
+                <ElementLabel x={365} y={330} label="Area Rug" visible={showLabels} />
+              </g>
+
+              {/* Bookshelf */}
+              <g filter="url(#furnitureShadow)">
+                <Bookshelf x={570} y={150} />
+                <ElementLabel x={620} y={240} label="Bookshelf" visible={showLabels} />
+              </g>
+
+              {/* Dining Table */}
+              <g filter="url(#furnitureShadow)">
+                <DiningTable x={220} y={110} />
+                <ElementLabel x={265} y={190} label="Coffee Table" visible={showLabels} />
+              </g>
+
+              {/* ==================== INTERACTIVE ZONES ==================== */}
+
+              {/* Food & Water Bowls */}
+              <g filter="url(#furnitureShadow)" onClick={fillFoodBowl} className="cursor-pointer">
+                <FoodBowl x={55} y={395} fillLevel={zones.find(z => z.id === 'food_bowl')?.fillLevel || 0} isEmpty={zones.find(z => z.id === 'food_bowl')?.isEmpty ?? true} />
+                <ElementLabel x={85} y={455} label="Food Bowl" visible={showLabels} />
+              </g>
+              <g filter="url(#furnitureShadow)" onClick={fillWaterBowl} className="cursor-pointer">
+                <WaterBowl x={135} y={395} fillLevel={zones.find(z => z.id === 'water_bowl')?.fillLevel || 100} />
+                <ElementLabel x={165} y={455} label="Water Bowl" visible={showLabels} />
+              </g>
+
+              {/* Toys */}
+              <g style={{ opacity: 0.9 }}>
+                <ToyBall x={355} y={355} />
+                <ElementLabel x={375} y={400} label="Ball Toy" visible={showLabels} />
+                <YarnBall x={460} y={415} />
+                <ElementLabel x={485} y={460} label="Yarn Ball" visible={showLabels} />
+              </g>
+
+              {/* ==================== DANGER OBJECTS WITH GLOW ==================== */}
+
+              {zones.filter(z => z.type === 'vase').map(zone => (
+                <g
                   key={zone.id}
-                  className="absolute"
-                  style={{
-                    left: zone.position.x,
-                    top: zone.position.y,
-                  }}
+                  onClick={() => zone.isWobbling && setZones(prev => prev.map(z => z.id === zone.id ? { ...z, isWobbling: false } : z))}
+                  className="cursor-pointer"
+                  filter={zone.isWobbling ? "url(#dangerGlow)" : "url(#furnitureShadow)"}
                 >
-                  <span className="text-4xl filter drop-shadow-lg">{zone.emoji}</span>
-                </div>
-              );
-            })}
+                  <Vase x={zone.position.x} y={zone.position.y} isWobbling={zone.isWobbling} isFallen={zone.isFallen} />
+                  {zone.isWobbling && (
+                    <g transform={`translate(${zone.position.x + 22}, ${zone.position.y - 10})`}>
+                      <circle r="24" fill="#ff0000" opacity="0.2">
+                        <animate attributeName="r" values="20;28;20" dur="0.5s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="0.3;0.1;0.3" dur="0.5s" repeatCount="indefinite" />
+                      </circle>
+                      <text textAnchor="middle" fontSize="22" fill="#ff0000" fontWeight="bold">⚠️</text>
+                      <text y="20" textAnchor="middle" fontSize="12" fill="#fff" fontWeight="bold" stroke="#000" strokeWidth="0.5">SAVE!</text>
+                    </g>
+                  )}
+                  <ElementLabel x={zone.position.x + 20} y={zone.position.y + 65} label={zone.label} visible={showLabels} />
+                </g>
+              ))}
 
-            {/* Food & Water Bowls */}
-            {zones.filter(z => z.type === 'food_bowl' || z.type === 'water_bowl').map(zone => (
-              <div
-                key={zone.id}
-                onClick={() => zone.type === 'food_bowl' ? fillFoodBowl() : fillWaterBowl()}
-                className="absolute cursor-pointer group"
-                style={{
-                  left: zone.position.x,
-                  top: zone.position.y,
-                }}
-              >
-                {/* Bowl */}
-                <div className={`w-14 h-8 rounded-full ${zone.type === 'food_bowl' ? 'bg-amber-700' : 'bg-blue-300'} shadow-lg border-2 border-stone-400 relative overflow-hidden`}>
-                  {/* Fill level */}
-                  <div
-                    className={`absolute bottom-0 left-0 right-0 transition-all ${
-                      zone.type === 'food_bowl' ? 'bg-amber-500' : 'bg-blue-400'
-                    }`}
-                    style={{ height: `${zone.fillLevel || 0}%` }}
-                  />
-                  {/* Food/Water content */}
-                  <span className="absolute inset-0 flex items-center justify-center text-lg">
-                    {zone.type === 'food_bowl' ? (zone.isEmpty ? '🥣' : '🍖') : '💧'}
-                  </span>
-                </div>
-
-                {/* Empty indicator */}
-                {zone.isEmpty && (
-                  <span className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-xs bg-red-500 text-white px-2 py-0.5 rounded animate-pulse whitespace-nowrap">
-                    Empty!
-                  </span>
-                )}
-
-                {/* Fill hint on hover */}
-                <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-white text-xs px-2 py-1 rounded shadow whitespace-nowrap">
-                  Click to fill
-                </div>
-              </div>
-            ))}
-
-            {/* Interactive Objects (vases, mugs, etc.) */}
-            {zones.filter(z => z.isWobbling !== undefined).map(zone => (
-              <div
-                key={zone.id}
-                onClick={() => zone.isWobbling && setZones(prev => prev.map(z => z.id === zone.id ? { ...z, isWobbling: false } : z))}
-                className={`absolute cursor-pointer transition-all ${
-                  zone.isWobbling
-                    ? 'animate-wobble'
-                    : zone.isFallen
-                    ? 'opacity-40 transform rotate-90 translate-y-2'
-                    : ''
-                }`}
-                style={{
-                  left: zone.position.x,
-                  top: zone.position.y,
-                }}
-              >
-                <span className={`text-4xl filter drop-shadow-lg ${zone.isFallen ? 'grayscale' : ''}`}>
-                  {zone.emoji}
-                </span>
-
-                {/* Warning when wobbling */}
-                {zone.isWobbling && (
-                  <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 flex flex-col items-center">
-                    <span className="text-red-500 text-xs font-bold animate-bounce">⚠️</span>
-                    <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded animate-pulse whitespace-nowrap">
-                      Save!
-                    </span>
-                  </div>
-                )}
-
-                {/* Broken effect when fallen */}
-                {zone.isFallen && (
-                  <span className="absolute -top-4 left-full text-lg">💔</span>
-                )}
-              </div>
-            ))}
-
-            {/* Play zones */}
-            {zones.filter(z => z.type === 'play').map(zone => (
-              <div
-                key={zone.id}
-                className="absolute opacity-60"
-                style={{
-                  left: zone.position.x,
-                  top: zone.position.y,
-                }}
-              >
-                <span className="text-3xl animate-bounce" style={{ animationDelay: `${Math.random() * 1000}ms` }}>
-                  {zone.emoji}
-                </span>
-              </div>
-            ))}
-
-            {/* Cat Tree */}
-            {zones.filter(z => z.type === 'cat_tree').map(zone => (
-              <div
-                key={zone.id}
-                className="absolute"
-                style={{
-                  left: zone.position.x,
-                  top: zone.position.y,
-                }}
-              >
-                <span className="text-5xl filter drop-shadow-lg">🏰</span>
-              </div>
-            ))}
-
-            {/* Cats */}
-            {cats.map(cat => {
-              const urgent = getMostUrgentNeed({ ...cat, needs: {
-                hunger: cat.needs.hunger,
-                play: cat.needs.play,
-                attention: cat.needs.attention,
-              }});
-
-              const isHovered = hoveredCat === cat.id;
-
-              return (
-                <div
-                  key={cat.id}
-                  className="absolute cursor-pointer group"
-                  onMouseEnter={() => setHoveredCat(cat.id)}
-                  onMouseLeave={() => setHoveredCat(null)}
-                  style={{
-                    left: cat.position.x - 22,
-                    top: cat.position.y - 22,
-                    zIndex: Math.floor(cat.position.y),
-                  }}
+              {zones.filter(z => z.type === 'lamp').map(zone => (
+                <g
+                  key={zone.id}
+                  onClick={() => zone.isWobbling && setZones(prev => prev.map(z => z.id === zone.id ? { ...z, isWobbling: false } : z))}
+                  className="cursor-pointer"
+                  filter={zone.isWobbling ? "url(#dangerGlow)" : "url(#furnitureShadow)"}
                 >
-                  {/* Cat shadow */}
-                  <div
-                    className="absolute inset-0 bg-black/20 rounded-full transform scale-110 translate-y-1"
-                    style={{ width: 36, height: 20, left: 4, top: 28 }}
-                  />
+                  <TableLamp x={zone.position.x} y={zone.position.y} isWobbling={zone.isWobbling} isFallen={zone.isFallen} />
+                  {zone.isWobbling && (
+                    <g transform={`translate(${zone.position.x + 20}, ${zone.position.y - 10})`}>
+                      <circle r="20" fill="#ff0000" opacity="0.2">
+                        <animate attributeName="r" values="16;22;16" dur="0.5s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="0.3;0.1;0.3" dur="0.5s" repeatCount="indefinite" />
+                      </circle>
+                      <text textAnchor="middle" fontSize="20" fill="#ff0000" fontWeight="bold">⚠️</text>
+                    </g>
+                  )}
+                  <ElementLabel x={zone.position.x + 20} y={zone.position.y + 65} label="Table Lamp" visible={showLabels} />
+                </g>
+              ))}
 
-                  {/* Cat emoji with personality */}
-                  <div
-                    className={`relative transition-all ${
-                      cat.state === 'eating' ? 'scale-110' :
-                      cat.state === 'playing' ? 'animate-bounce' :
-                      cat.state === 'purring' ? 'animate-pulse' :
-                      cat.state === 'scolded' ? 'grayscale opacity-50' :
-                      'hover:scale-105'
-                    } ${cat.velocity.x !== 0 || cat.velocity.y !== 0 ? 'animate-walk' : ''}`}
+              {zones.filter(z => z.type === 'mug').map(zone => (
+                <g
+                  key={zone.id}
+                  onClick={() => zone.isWobbling && setZones(prev => prev.map(z => z.id === zone.id ? { ...z, isWobbling: false } : z))}
+                  className="cursor-pointer"
+                  filter={zone.isWobbling ? "url(#dangerGlow)" : "url(#furnitureShadow)"}
+                >
+                  <CoffeeMug x={zone.position.x} y={zone.position.y} isWobbling={zone.isWobbling} isFallen={zone.isFallen} />
+                  {zone.isWobbling && (
+                    <g transform={`translate(${zone.position.x + 17}, ${zone.position.y - 10})`}>
+                      <circle r="20" fill="#ff0000" opacity="0.2">
+                        <animate attributeName="r" values="16;22;16" dur="0.5s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="0.3;0.1;0.3" dur="0.5s" repeatCount="indefinite" />
+                      </circle>
+                      <text textAnchor="middle" fontSize="20" fill="#ff0000" fontWeight="bold">⚠️</text>
+                    </g>
+                  )}
+                  <ElementLabel x={zone.position.x + 17} y={zone.position.y + 50} label="Coffee Mug" visible={showLabels} />
+                </g>
+              ))}
+
+              {/* ==================== CATS LAYER ==================== */}
+
+              {cats.map(cat => {
+                const urgent = getMostUrgentNeed({ ...cat, needs: {
+                  hunger: cat.needs.hunger,
+                  play: cat.needs.play,
+                  attention: cat.needs.attention,
+                }});
+
+                const isHovered = hoveredCat === cat.id;
+
+                return (
+                  <g
+                    key={cat.id}
+                    className="cursor-pointer"
+                    onMouseEnter={() => setHoveredCat(cat.id)}
+                    onMouseLeave={() => setHoveredCat(null)}
+                    style={{ zIndex: Math.floor(cat.position.y) }}
                   >
-                    <span className="text-5xl filter drop-shadow-md">
-                      {cat.emoji}
-                    </span>
-                  </div>
+                    {/* Cat sprite */}
+                    <g filter="url(#catShadow)">
+                      <CatSprite emoji={cat.emoji} x={cat.position.x} y={cat.position.y} state={cat.state} />
+                    </g>
 
-                  {/* Need bars */}
-                  <div className={`absolute -top-14 left-1/2 transform -translate-x-1/2 flex gap-1.5 transition-all ${isHovered ? 'opacity-100' : 'opacity-70'} ${urgent.value >= DISASTER_THRESHOLD ? 'scale-110' : ''}`}>
-                    {(['hunger', 'play', 'attention'] as const).map(need => (
-                      <div key={need} className="relative">
-                        <div className="w-5 h-3 bg-stone-700 rounded-full overflow-hidden shadow-sm">
-                          <div
-                            className={`h-full transition-all ${getNeedColor(cat.needs[need])}`}
-                            style={{ width: `${cat.needs[need]}%` }}
-                          />
-                        </div>
-                        <span className="absolute -top-4 left-1/2 transform -translate-x-1/2 text-xs">
-                          {getNeedIcon(need)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                    {/* Need indicators */}
+                    <g transform={`translate(${cat.position.x - 48}, ${cat.position.y - 80})`}>
+                      <rect x="-4" y="-8" width="104" height="28" rx="14" fill="rgba(0,0,0,0.75)" />
 
-                  {/* Urgent warning */}
-                  {urgent.value >= DISASTER_THRESHOLD && (
-                    <div className="absolute -top-24 left-1/2 transform -translate-x-1/2 bg-red-500 text-white text-xs px-2 py-1 rounded animate-pulse whitespace-nowrap shadow-lg">
-                      {getNeedIcon(urgent.type)} {urgent.type.toUpperCase()}!
-                    </div>
-                  )}
+                      {(['hunger', 'play', 'attention'] as const).map((need, i) => {
+                        const value = cat.needs[need];
+                        const color = getNeedFillColor(value);
+                        const isCritical = value >= DISASTER_THRESHOLD;
 
-                  {/* Scolded indicator */}
-                  {cat.state === 'scolded' && (
-                    <div className="absolute -top-16 left-1/2 transform -translate-x-1/2 text-2xl animate-ping">
-                      ✋
-                    </div>
-                  )}
+                        return (
+                          <g key={need} transform={`translate(${i * 32}, 0)`}>
+                            <rect x="0" y="0" width="28" height="20" rx="5" fill={isCritical ? '#ef4444' : '#333'} stroke={color} strokeWidth="2" />
+                            <rect x="2" y="2" width={`${Math.min(24, (value / 100) * 24)}`} height="16" rx="2" fill={color} />
+                            <text x="14" y="15" textAnchor="middle" fontSize="12">{NEED_ICONS[need]}</text>
+                          </g>
+                        );
+                      })}
+                    </g>
 
-                  {/* Action menu on hover */}
-                  <div className={`absolute top-full left-1/2 transform -translate-x-1/2 mt-2 transition-all ${
-                    isHovered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'
-                  } z-20`}>
-                    <div className="bg-white rounded-xl shadow-xl p-2 flex gap-1 border-2 border-stone-200">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); fulfillNeed(cat.id, 'hunger'); }}
-                        className="p-2 hover:bg-amber-100 rounded-lg transition-colors flex flex-col items-center"
-                        title="Feed"
-                      >
-                        <span className="text-xl">🍖</span>
-                        <span className="text-xs text-amber-700">Feed</span>
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); fulfillNeed(cat.id, 'play'); }}
-                        className="p-2 hover:bg-green-100 rounded-lg transition-colors flex flex-col items-center"
-                        title="Play"
-                      >
-                        <span className="text-xl">🎾</span>
-                        <span className="text-xs text-green-700">Play</span>
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); fulfillNeed(cat.id, 'attention'); }}
-                        className="p-2 hover:bg-pink-100 rounded-lg transition-colors flex flex-col items-center"
-                        title="Pet"
-                      >
-                        <span className="text-xl">💕</span>
-                        <span className="text-xs text-pink-700">Pet</span>
-                      </button>
-                      <div className="w-px bg-stone-200 mx-1" />
-                      <button
-                        onClick={(e) => { e.stopPropagation(); scoldCat(cat.id); }}
-                        className="p-2 hover:bg-red-100 rounded-lg transition-colors flex flex-col items-center"
-                        title="No No!"
-                      >
-                        <span className="text-xl">✋</span>
-                        <span className="text-xs text-red-700">No!</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+                    {/* Urgent warning */}
+                    {urgent.value >= DISASTER_THRESHOLD && (
+                      <g transform={`translate(${cat.position.x - 28}, ${cat.position.y - 110})`}>
+                        <rect x="0" y="0" width="56" height="24" rx="8" fill="#ef4444">
+                          <animate attributeName="opacity" values="1;0.7;1" dur="0.4s" repeatCount="indefinite" />
+                        </rect>
+                        <rect x="2" y="2" width="52" height="20" rx="6" fill="none" stroke="#fff" strokeWidth="1" />
+                        <text x="28" y="16" textAnchor="middle" fontSize="10" fill="#fff" fontWeight="bold">
+                          {NEED_ICONS[urgent.type]} {urgent.type.toUpperCase()}!
+                        </text>
+                      </g>
+                    )}
 
-            {/* Popups */}
-            {popups.map(popup => (
-              <div
-                key={popup.id}
-                className="absolute pointer-events-none font-bold text-lg animate-float-up z-50"
-                style={{
-                  left: popup.x,
-                  top: popup.y,
-                }}
-              >
-                <span className={popup.value.includes('-') ? 'text-red-500' : 'text-green-500'}>
-                  {popup.value}
-                </span>
-              </div>
-            ))}
+                    {/* Scolded indicator */}
+                    {cat.state === 'scolded' && (
+                      <g transform={`translate(${cat.position.x - 14}, ${cat.position.y - 75})`}>
+                        <circle r="20" fill="#ef4444" opacity="0.3">
+                          <animate attributeName="r" values="18;24;18" dur="0.6s" repeatCount="indefinite" />
+                        </circle>
+                        <text fontSize="32" filter="url(#catShadow)">✋</text>
+                      </g>
+                    )}
+
+                    {/* Action menu */}
+                    <g
+                      transform={`translate(${cat.position.x - 65}, ${cat.position.y + 40})`}
+                      style={{
+                        opacity: isHovered ? 1 : 0,
+                        transition: 'opacity 0.2s',
+                        pointerEvents: isHovered ? 'auto' : 'none',
+                      }}
+                    >
+                      <rect x="-8" y="-8" width="146" height="58" rx="10" fill="rgba(30,30,30,0.95)" stroke="#555" strokeWidth="2" />
+
+                      {/* Feed */}
+                      <g onClick={(e) => { e.stopPropagation(); fulfillNeed(cat.id, 'hunger'); }}>
+                        <rect x="0" y="0" width="40" height="42" rx="8" fill="#8B4513" className="cursor-pointer hover:fill-a0522d" />
+                        <text x="20" y="24" textAnchor="middle" fontSize="18">🍖</text>
+                        <text x="20" y="38" textAnchor="middle" fontSize="8" fill="#fff" fontWeight="bold">FEED</text>
+                      </g>
+
+                      {/* Play */}
+                      <g onClick={(e) => { e.stopPropagation(); fulfillNeed(cat.id, 'play'); }}>
+                        <rect x="46" y="0" width="40" height="42" rx="8" fill="#228b22" className="cursor-pointer hover:fill-2e8b57" />
+                        <text x="66" y="24" textAnchor="middle" fontSize="18">🎾</text>
+                        <text x="66" y="38" textAnchor="middle" fontSize="8" fill="#fff" fontWeight="bold">PLAY</text>
+                      </g>
+
+                      {/* Pet */}
+                      <g onClick={(e) => { e.stopPropagation(); fulfillNeed(cat.id, 'attention'); }}>
+                        <rect x="92" y="0" width="40" height="42" rx="8" fill="#ff69b4" className="cursor-pointer hover:fill-ff1493" />
+                        <text x="112" y="24" textAnchor="middle" fontSize="18">💕</text>
+                        <text x="112" y="38" textAnchor="middle" fontSize="8" fill="#fff" fontWeight="bold">PET</text>
+                      </g>
+
+                      {/* Divider lines */}
+                      <line x1="42" y1="4" x2="42" y2="44" stroke="#555" strokeWidth="1" />
+                      <line x1="88" y1="4" x2="88" y2="44" stroke="#555" strokeWidth="1" />
+                    </g>
+                  </g>
+                );
+              })}
+
+              {/* Popups */}
+              {popups.map(popup => (
+                <g key={popup.id} transform={`translate(${popup.x}, ${popup.y})`}>
+                  <text textAnchor="middle" fontSize="18" fontWeight="bold" fill={popup.value.includes('-') ? '#ef4444' : '#22c55e'} filter="url(#catShadow)">
+                    {popup.value}
+                  </text>
+                </g>
+              ))}
+            </svg>
           </div>
 
           {/* Game Over */}
           {gameOver && (
-            <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-50">
-              <div className="bg-white rounded-2xl p-8 text-center shadow-2xl animate-bounce">
-                <div className="text-6xl mb-4">😿</div>
-                <h2 className="text-3xl font-bold text-stone-800 mb-2">Game Over!</h2>
-                <p className="text-stone-600 mb-4">Final Score: <span className="font-bold text-amber-600">{score}</span></p>
-                <p className="text-stone-500 mb-6">
-                  You managed {cats.length} cat{cats.length > 1 ? 's' : ''}!
-                </p>
+            <div className="absolute inset-0 bg-black/70 flex items-center justify-center z-50">
+              <div className="bg-stone-800 rounded-2xl p-10 text-center shadow-2xl border border-stone-600 animate-bounce">
+                <div className="text-7xl mb-4">😿</div>
+                <h2 className="text-3xl font-bold text-stone-200 mb-2">Game Over!</h2>
+                <p className="text-stone-400 mb-4">Final Score: <span className="font-bold text-amber-400">{score}</span></p>
+                <p className="text-stone-500 mb-6">You managed {cats.length} cat{cats.length > 1 ? 's' : ''}!</p>
                 <button
                   onClick={startGame}
                   className="px-8 py-3 bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold rounded-xl hover:from-amber-600 hover:to-orange-600 transition-all shadow-lg"
@@ -812,49 +830,26 @@ export default function CatChaosGame() {
           )}
 
           {/* Instructions */}
-          <div className="mt-4 flex flex-wrap gap-4 text-sm text-stone-600 bg-white/60 px-4 py-2 rounded-lg">
-            <span className="flex items-center gap-1"><span className="text-lg">🐱</span> Hover → Actions</span>
-            <span className="flex items-center gap-1"><span className="text-lg">🥣</span> Click → Fill bowls</span>
-            <span className="flex items-center gap-1"><span className="text-lg">✋</span> Scold → Stop chaos</span>
-            <span className="flex items-center gap-1"><span className="text-lg">⚠️</span> Save → Click wobbling items</span>
+          <div className="mt-4 flex flex-wrap gap-6 text-sm text-stone-400 bg-stone-800/80 px-6 py-3 rounded-lg border border-stone-700">
+            <span className="flex items-center gap-2"><span className="text-lg">🐱</span> Hover → Actions</span>
+            <span className="flex items-center gap-2"><span className="text-lg">🥣</span> Click → Fill bowls</span>
+            <span className="flex items-center gap-2"><span className="text-lg">✋</span> Scold → Stop chaos</span>
+            <span className="flex items-center gap-2"><span className="text-lg">⚠️</span> Save → Click items</span>
+            <span className="flex items-center gap-2"><span className="text-lg">🏷️</span> Toggle → Show Labels</span>
           </div>
         </>
       )}
 
       <style jsx>{`
-        @keyframes float-up {
-          0% { opacity: 1; transform: translateY(0) scale(1); }
-          100% { opacity: 0; transform: translateY(-40px) scale(1.2); }
-        }
-        .animate-float-up {
-          animation: float-up 1.2s ease-out forwards;
-        }
-
         @keyframes shake {
           0%, 100% { transform: translateX(0); }
-          20% { transform: translateX(-8px) rotate(-1deg); }
-          40% { transform: translateX(8px) rotate(1deg); }
-          60% { transform: translateX(-6px) rotate(-1deg); }
-          80% { transform: translateX(6px) rotate(1deg); }
+          20% { transform: translateX(-6px) rotate(-0.5deg); }
+          40% { transform: translateX(6px) rotate(0.5deg); }
+          60% { transform: translateX(-4px) rotate(-0.3deg); }
+          80% { transform: translateX(4px) rotate(0.3deg); }
         }
         .animate-shake {
           animation: shake 0.4s ease-in-out;
-        }
-
-        @keyframes wobble {
-          0%, 100% { transform: rotate(-5deg); }
-          50% { transform: rotate(5deg); }
-        }
-        .animate-wobble {
-          animation: wobble 0.3s ease-in-out infinite;
-        }
-
-        @keyframes walk {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-2px); }
-        }
-        .animate-walk {
-          animation: walk 0.2s ease-in-out infinite;
         }
       `}</style>
     </div>
