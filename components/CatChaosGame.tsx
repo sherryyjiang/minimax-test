@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  RoomElements, WoodFloor, Window, CatTree,
-  FoodBowl, WaterBowl, Rug, Bookshelf, Sofa, DiningTable,
+  RoomElements, Window, CatTree,
+  FoodBowl, WaterBowl, Rug, Bookshelf, Sofa, CoffeeTable,
   Vase, TableLamp, CoffeeMug, Plant, ToyBall, YarnBall,
-  CatSprite, WindowPlant, SisalPattern, RoomBackground,
-  BackWall, SideWalls, RealisticFloor, ElementLabel
+  CatSprite, SisalPattern, BackWall, SideWalls, ElementLabel,
+  RoomFloor, RugTexture, RoomLighting
 } from './RoomAssets';
 
 // Types
@@ -71,40 +71,40 @@ const CATS = [
 // Room layout with labels for educational purposes
 const ROOM_ZONES: Zone[] = [
   // Back wall elements
-  { id: 'window', type: 'window', emoji: '🪟', position: { x: 80, y: 25 }, width: 120, height: 55, label: 'Window' },
+  { id: 'window', type: 'window', emoji: '🪟', position: { x: 60, y: 15 }, width: 140, height: 70, label: 'Window' },
 
   // Plants
-  { id: 'plant1', type: 'plant', emoji: '🌿', position: { x: 30, y: 70 }, width: 45, height: 45, label: 'Potted Plant' },
-  { id: 'plant2', type: 'plant', emoji: '🌵', position: { x: 190, y: 70 }, width: 45, height: 45, label: 'Cactus' },
+  { id: 'plant1', type: 'plant', emoji: '🌿', position: { x: 25, y: 70 }, width: 50, height: 50, label: 'Fern' },
+  { id: 'plant2', type: 'plant', emoji: '🌵', position: { x: 220, y: 70 }, width: 45, height: 50, label: 'Cactus' },
 
   // Cat tree (larger, more prominent)
-  { id: 'cattree', type: 'cat_tree', emoji: '🏰', position: { x: 350, y: 15 }, width: 100, height: 110, label: 'Cat Tower' },
+  { id: 'cattree', type: 'cat_tree', emoji: '🏰', position: { x: 330, y: 10 }, width: 100, height: 115, label: 'Cat Tower' },
 
   // Sofa (larger)
-  { id: 'sofa', type: 'sofa', emoji: '🛋️', position: { x: 520, y: 20 }, width: 160, height: 80, label: 'Sofa' },
+  { id: 'sofa', type: 'sofa', emoji: '🛋️', position: { x: 490, y: 15 }, width: 190, height: 95, label: 'Sofa' },
 
   // Rug (center floor)
-  { id: 'rug', type: 'rug', emoji: '', position: { x: 280, y: 200 }, width: 180, height: 120, label: 'Area Rug' },
+  { id: 'rug', type: 'rug', emoji: '', position: { x: 270, y: 185 }, width: 180, height: 130, label: 'Area Rug' },
 
   // Bookshelf
-  { id: 'bookshelf', type: 'bookshelf', emoji: '📚', position: { x: 580, y: 160 }, width: 100, height: 80, label: 'Bookshelf' },
+  { id: 'bookshelf', type: 'bookshelf', emoji: '📚', position: { x: 560, y: 145 }, width: 110, height: 85, label: 'Bookshelf' },
 
   // Vases on bookshelf
-  { id: 'vase1', type: 'vase', emoji: '🏺', position: { x: 590, y: 110 }, width: 45, height: 55, label: 'Flower Vase' },
-  { id: 'vase2', type: 'vase', emoji: '⚱️', position: { x: 650, y: 115 }, width: 40, height: 50, label: 'Decorative Vase' },
+  { id: 'vase1', type: 'vase', emoji: '🏺', position: { x: 570, y: 100 }, width: 45, height: 55, label: 'Flower Vase' },
+  { id: 'vase2', type: 'vase', emoji: '⚱️', position: { x: 640, y: 105 }, width: 40, height: 50, label: 'Decorative Vase' },
 
-  // Table and items
-  { id: 'table', type: 'sofa', emoji: '🪑', position: { x: 230, y: 120 }, width: 90, height: 70, label: 'Coffee Table' },
-  { id: 'lamp', type: 'lamp', emoji: '💡', position: { x: 240, y: 90 }, width: 40, height: 55, label: 'Table Lamp' },
-  { id: 'mug', type: 'mug', emoji: '☕', position: { x: 280, y: 95 }, width: 35, height: 40, label: 'Coffee Mug' },
+  // Coffee table with items
+  { id: 'table', type: 'sofa', emoji: '🪑', position: { x: 210, y: 105 }, width: 100, height: 75, label: 'Coffee Table' },
+  { id: 'lamp', type: 'lamp', emoji: '💡', position: { x: 220, y: 75 }, width: 45, height: 60, label: 'Table Lamp' },
+  { id: 'mug', type: 'mug', emoji: '☕', position: { x: 270, y: 85 }, width: 35, height: 40, label: 'Coffee Mug' },
 
   // Food area
-  { id: 'food_bowl', type: 'food_bowl', emoji: '🍖', position: { x: 60, y: 400 }, width: 55, height: 45, label: 'Food Bowl' },
-  { id: 'water_bowl', type: 'water_bowl', emoji: '💧', position: { x: 140, y: 400 }, width: 55, height: 45, label: 'Water Bowl' },
+  { id: 'food_bowl', type: 'food_bowl', emoji: '🍖', position: { x: 50, y: 400 }, width: 55, height: 45, label: 'Food Bowl' },
+  { id: 'water_bowl', type: 'water_bowl', emoji: '💧', position: { x: 130, y: 400 }, width: 55, height: 45, label: 'Water Bowl' },
 
   // Toys
-  { id: 'toy1', type: 'toy', emoji: '🎾', position: { x: 360, y: 360 }, width: 35, height: 35, label: 'Ball Toy' },
-  { id: 'toy2', type: 'toy', emoji: '🧶', position: { x: 470, y: 420 }, width: 35, height: 35, label: 'Yarn Ball' },
+  { id: 'toy1', type: 'toy', emoji: '🎾', position: { x: 350, y: 360 }, width: 35, height: 35, label: 'Ball Toy' },
+  { id: 'toy2', type: 'toy', emoji: '🧶', position: { x: 460, y: 425 }, width: 35, height: 35, label: 'Yarn Ball' },
 ];
 
 // Random spawn positions
@@ -518,8 +518,10 @@ export default function CatChaosGame() {
           >
             <svg width={GAME_WIDTH} height={GAME_HEIGHT} viewBox={`0 0 ${GAME_WIDTH} ${GAME_HEIGHT}`}>
               <defs>
-                <RealisticFloor />
+                <RoomFloor />
+                <RugTexture />
                 <SisalPattern />
+                <RoomLighting />
 
                 {/* Red glow for danger items */}
                 <filter id="dangerGlow" x="-50%" y="-50%" width="200%" height="200%">
@@ -530,102 +532,102 @@ export default function CatChaosGame() {
                   </feMerge>
                 </filter>
 
-                {/* Lighting gradient */}
-                <radialGradient id="roomLight" cx="50%" cy="40%" r="70%">
-                  <stop offset="0%" stopColor="#fff8e7" stopOpacity="0.05" />
-                  <stop offset="100%" stopColor="#1a1a1a" stopOpacity="0" />
-                </radialGradient>
+                {/* Soft shadow for furniture */}
+                <filter id="furnitureShadow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feDropShadow dx="3" dy="4" stdDeviation="4" floodColor="#000" floodOpacity="0.2" />
+                </filter>
 
                 {/* Cat shadow */}
                 <filter id="catShadow" x="-50%" y="-50%" width="200%" height="200%">
-                  <feDropShadow dx="0" dy="4" stdDeviation="4" floodColor="#000" floodOpacity="0.35" />
-                </filter>
-
-                {/* Furniture shadow */}
-                <filter id="furnitureShadow" x="-20%" y="-20%" width="140%" height="140%">
-                  <feDropShadow dx="4" dy="5" stdDeviation="5" floodColor="#000" floodOpacity="0.25" />
+                  <feDropShadow dx="0" dy="3" stdDeviation="3" floodColor="#000" floodOpacity="0.25" />
                 </filter>
               </defs>
 
-              {/* Room Background Image */}
-              <RoomBackground imageUrl="/room-bg.png" />
+              {/* ==================== ROOM BASE LAYER ==================== */}
 
-              {/* Floor with slight transparency to show background */}
-              <rect width={GAME_WIDTH} height={GAME_HEIGHT} fill="url(#realisticFloor)" style={{ opacity: 0.7 }} />
+              {/* Floor - base layer with perspective gradient */}
+              <rect width={GAME_WIDTH} height={GAME_HEIGHT} fill="url(#floorPlanks)" />
 
-              {/* Back Wall with picture and lamp */}
+              {/* Floor shadow overlay for depth */}
+              <rect width={GAME_WIDTH} height={GAME_HEIGHT} fill="url(#floorShadow)" />
+
+              {/* ==================== WALLS LAYER ==================== */}
+
+              {/* Back wall */}
               <BackWall width={GAME_WIDTH} height={GAME_HEIGHT} />
 
-              {/* Side Walls */}
+              {/* Side walls with perspective */}
               <SideWalls width={GAME_WIDTH} height={GAME_HEIGHT} />
 
-              {/* Lighting overlay */}
-              <rect width={GAME_WIDTH} height={GAME_HEIGHT} fill="url(#roomLight)" pointerEvents="none" />
+              {/* ==================== LIGHTING LAYER ==================== */}
 
-              {/* ==================== ROOM FURNITURE LAYER ==================== */}
+              {/* Window light effect */}
+              <ellipse cx="130" cy="100" rx="180" ry="120" fill="url(#windowLight)" />
+
+              {/* ==================== FURNITURE LAYER ==================== */}
 
               {/* Window */}
               <g filter="url(#furnitureShadow)">
-                <Window x={60} y={20} width={140} height={60} />
-                <ElementLabel x={130} y={90} label="Window" visible={showLabels} />
+                <Window x={60} y={15} width={140} height={70} />
+                <ElementLabel x={130} y={95} label="Window" visible={showLabels} />
               </g>
 
               {/* Plants near window */}
               <g filter="url(#furnitureShadow)">
-                <Plant x={25} y={65} type="fern" />
-                <ElementLabel x={50} y={120} label="Fern" visible={showLabels} />
-                <Plant x={195} y={65} type="cactus" />
-                <ElementLabel x={215} y={120} label="Cactus" visible={showLabels} />
+                <Plant x={25} y={70} type="fern" />
+                <ElementLabel x={50} y={130} label="Fern" visible={showLabels} />
+                <Plant x={220} y={70} type="cactus" />
+                <ElementLabel x={245} y={130} label="Cactus" visible={showLabels} />
               </g>
 
               {/* Cat Tree */}
               <g filter="url(#furnitureShadow)">
-                <CatTree x={340} y={5} />
-                <ElementLabel x={390} y={130} label="Cat Tower" visible={showLabels} />
+                <CatTree x={330} y={10} />
+                <ElementLabel x={380} y={140} label="Cat Tower" visible={showLabels} />
               </g>
 
               {/* Sofa */}
               <g filter="url(#furnitureShadow)">
-                <Sofa x={510} y={15} width={175} height={90} />
-                <ElementLabel x={595} y={115} label="Sofa" visible={showLabels} />
+                <Sofa x={490} y={15} width={190} height={95} />
+                <ElementLabel x={585} y={120} label="Sofa" visible={showLabels} />
               </g>
 
-              {/* Rug */}
-              <g filter="url(#furnitureShadow)" style={{ opacity: 0.85 }}>
-                <Rug x={270} y={190} width={190} height={130} color="#8B0000" />
-                <ElementLabel x={365} y={330} label="Area Rug" visible={showLabels} />
+              {/* Rug - placed on floor but under other furniture */}
+              <g filter="url(#furnitureShadow)" style={{ opacity: 0.9 }}>
+                <Rug x={270} y={185} width={180} height={130} color="#8B0000" />
+                <ElementLabel x={360} y={325} label="Area Rug" visible={showLabels} />
               </g>
 
               {/* Bookshelf */}
               <g filter="url(#furnitureShadow)">
-                <Bookshelf x={570} y={150} />
-                <ElementLabel x={620} y={240} label="Bookshelf" visible={showLabels} />
+                <Bookshelf x={560} y={145} />
+                <ElementLabel x={615} y={240} label="Bookshelf" visible={showLabels} />
               </g>
 
-              {/* Dining Table */}
+              {/* Coffee Table */}
               <g filter="url(#furnitureShadow)">
-                <DiningTable x={220} y={110} />
-                <ElementLabel x={265} y={190} label="Coffee Table" visible={showLabels} />
+                <CoffeeTable x={210} y={105} />
+                <ElementLabel x={260} y={190} label="Coffee Table" visible={showLabels} />
               </g>
 
               {/* ==================== INTERACTIVE ZONES ==================== */}
 
               {/* Food & Water Bowls */}
               <g filter="url(#furnitureShadow)" onClick={fillFoodBowl} className="cursor-pointer">
-                <FoodBowl x={55} y={395} fillLevel={zones.find(z => z.id === 'food_bowl')?.fillLevel || 0} isEmpty={zones.find(z => z.id === 'food_bowl')?.isEmpty ?? true} />
-                <ElementLabel x={85} y={455} label="Food Bowl" visible={showLabels} />
+                <FoodBowl x={50} y={400} fillLevel={zones.find(z => z.id === 'food_bowl')?.fillLevel || 0} isEmpty={zones.find(z => z.id === 'food_bowl')?.isEmpty ?? true} />
+                <ElementLabel x={80} y={460} label="Food Bowl" visible={showLabels} />
               </g>
               <g filter="url(#furnitureShadow)" onClick={fillWaterBowl} className="cursor-pointer">
-                <WaterBowl x={135} y={395} fillLevel={zones.find(z => z.id === 'water_bowl')?.fillLevel || 100} />
-                <ElementLabel x={165} y={455} label="Water Bowl" visible={showLabels} />
+                <WaterBowl x={130} y={400} fillLevel={zones.find(z => z.id === 'water_bowl')?.fillLevel || 100} />
+                <ElementLabel x={160} y={460} label="Water Bowl" visible={showLabels} />
               </g>
 
               {/* Toys */}
               <g style={{ opacity: 0.9 }}>
-                <ToyBall x={355} y={355} />
-                <ElementLabel x={375} y={400} label="Ball Toy" visible={showLabels} />
-                <YarnBall x={460} y={415} />
-                <ElementLabel x={485} y={460} label="Yarn Ball" visible={showLabels} />
+                <ToyBall x={350} y={360} />
+                <ElementLabel x={370} y={405} label="Ball Toy" visible={showLabels} />
+                <YarnBall x={460} y={425} />
+                <ElementLabel x={485} y={470} label="Yarn Ball" visible={showLabels} />
               </g>
 
               {/* ==================== DANGER OBJECTS WITH GLOW ==================== */}
@@ -648,7 +650,7 @@ export default function CatChaosGame() {
                       <text y="20" textAnchor="middle" fontSize="12" fill="#fff" fontWeight="bold" stroke="#000" strokeWidth="0.5">SAVE!</text>
                     </g>
                   )}
-                  <ElementLabel x={zone.position.x + 20} y={zone.position.y + 65} label={zone.label} visible={showLabels} />
+                  <ElementLabel x={zone.position.x + 22} y={zone.position.y + 75} label={zone.label} visible={showLabels} />
                 </g>
               ))}
 
@@ -661,7 +663,7 @@ export default function CatChaosGame() {
                 >
                   <TableLamp x={zone.position.x} y={zone.position.y} isWobbling={zone.isWobbling} isFallen={zone.isFallen} />
                   {zone.isWobbling && (
-                    <g transform={`translate(${zone.position.x + 20}, ${zone.position.y - 10})`}>
+                    <g transform={`translate(${zone.position.x + 22}, ${zone.position.y - 10})`}>
                       <circle r="20" fill="#ff0000" opacity="0.2">
                         <animate attributeName="r" values="16;22;16" dur="0.5s" repeatCount="indefinite" />
                         <animate attributeName="opacity" values="0.3;0.1;0.3" dur="0.5s" repeatCount="indefinite" />
@@ -669,7 +671,7 @@ export default function CatChaosGame() {
                       <text textAnchor="middle" fontSize="20" fill="#ff0000" fontWeight="bold">⚠️</text>
                     </g>
                   )}
-                  <ElementLabel x={zone.position.x + 20} y={zone.position.y + 65} label="Table Lamp" visible={showLabels} />
+                  <ElementLabel x={zone.position.x + 22} y={zone.position.y + 75} label="Table Lamp" visible={showLabels} />
                 </g>
               ))}
 
@@ -682,7 +684,7 @@ export default function CatChaosGame() {
                 >
                   <CoffeeMug x={zone.position.x} y={zone.position.y} isWobbling={zone.isWobbling} isFallen={zone.isFallen} />
                   {zone.isWobbling && (
-                    <g transform={`translate(${zone.position.x + 17}, ${zone.position.y - 10})`}>
+                    <g transform={`translate(${zone.position.x + 18}, ${zone.position.y - 10})`}>
                       <circle r="20" fill="#ff0000" opacity="0.2">
                         <animate attributeName="r" values="16;22;16" dur="0.5s" repeatCount="indefinite" />
                         <animate attributeName="opacity" values="0.3;0.1;0.3" dur="0.5s" repeatCount="indefinite" />
@@ -690,7 +692,7 @@ export default function CatChaosGame() {
                       <text textAnchor="middle" fontSize="20" fill="#ff0000" fontWeight="bold">⚠️</text>
                     </g>
                   )}
-                  <ElementLabel x={zone.position.x + 17} y={zone.position.y + 50} label="Coffee Mug" visible={showLabels} />
+                  <ElementLabel x={zone.position.x + 18} y={zone.position.y + 55} label="Coffee Mug" visible={showLabels} />
                 </g>
               ))}
 
@@ -799,6 +801,11 @@ export default function CatChaosGame() {
                   </g>
                 );
               })}
+
+              {/* ==================== ATMOSPHERIC OVERLAY ==================== */}
+
+              {/* Vignette effect for room atmosphere */}
+              <rect width={GAME_WIDTH} height={GAME_HEIGHT} fill="url(#vignette)" pointerEvents="none" />
 
               {/* Popups */}
               {popups.map(popup => (
