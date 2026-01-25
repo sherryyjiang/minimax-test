@@ -11,11 +11,20 @@ This file tracks incremental build steps for the game. Specs stay in
 - Only ONE cat spawns at game start (Mochi)
 - No additional cats spawn over time
 - All core mechanics remain active (needs, bowls, toys, disasters)
+- **Round system implemented:** Each round has specific actions to complete
 - Perfect for testing individual action flows without distraction
+
+### Round System (Implemented):
+- Each round shows required actions (e.g., 🍖 hunger, 💧 water)
+- Round 1-3: 1 action per round (intro/onboarding)
+- Round 4+: 1-2 actions per round
+- Complete all actions → Round advances automatically
+- HUD shows current round number and action checklist
+- Brief "Round X" banner appears between rounds
 
 ### To Re-enable Full Mode:
 1. Open `components/CatChaosGame.tsx`
-2. Find the commented-out "Add new cat periodically" section (around line 433)
+2. Find the commented-out "Add new cat periodically" section (around line 500)
 3. Uncomment the entire `useEffect` block
 4. Remove the "Simplified Mode" banner from the title section
 
@@ -53,9 +62,9 @@ This file tracks incremental build steps for the game. Specs stay in
   | Manual: prevent + miss twice.
 - [ ] Scoring + streak + event log — Files: `components/CatChaosGame.tsx`
   | Automated: lint | Manual: verify points add/subtract and log order.
-- [ ] Round progression schedule (1 cat rounds 1-3, 2 cats 4-8, 3 cats 9-16,
-  4 cats 17-26, 4 cats 27+) — Files: `components/CatChaosGame.tsx`
-  | Automated: lint | Manual: simulate round advance.
+- [x] Round progression schedule (simplified: 1 action rounds 1-3, 1-2 actions 4+)
+  — Files: `components/CatChaosGame.tsx` | Automated: lint | Manual: complete
+  actions, verify round advances with banner.
 - [ ] Difficulty scaling (press counts, timer speed, disaster chance) — Files:
   `components/CatChaosGame.tsx` | Automated: lint | Manual: spot-check values.
 - [ ] Cat movement + trajectory (targets per need) — Files:

@@ -60,6 +60,11 @@ interface ActionWindow {
   zoneId?: string;
 }
 
+interface RoundAction {
+  type: 'hunger' | 'water' | 'play' | 'attention';
+  completed: boolean;
+}
+
 function getRandomInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
@@ -173,6 +178,11 @@ export default function CatChaosGame() {
   const [showLabels, setShowLabels] = useState(false); // Toggle for educational labels
   const [activeCatId, setActiveCatId] = useState<string | null>(null);
   const [actionWindow, setActionWindow] = useState<ActionWindow | null>(null);
+  // Round system state
+  const [currentRound, setCurrentRound] = useState(1);
+  const [roundActions, setRoundActions] = useState<RoundAction[]>([]);
+  const [showRoundBanner, setShowRoundBanner] = useState(false);
+  const [roundPaused, setRoundPaused] = useState(false);
   const gameLoopRef = useRef<number | null>(null);
   const catIdRef = useRef(0);
 
@@ -184,6 +194,73 @@ export default function CatChaosGame() {
       setPopups(prev => prev.filter(p => p.id !== id));
     }, 1200);
   }, []);
+
+  // Generate actions for a round based on round number
+  const generateRoundActions = useCallback((round: number): RoundAction[] => {
+    const actionTypes: Array<'hunger' | 'water' | 'play' | 'attention'> = ['hunger', 'water', 'play', 'attention'];
+    
+    // Rounds 1-3: 1-2 actions, simple intro
+    // For simplified single-cat mode, we'll use 1 action per round
+    const numActions = round <= 3 ? 1 : Math.min(2, 1 + Math.floor(round / 4));
+    
+    const actions: RoundAction[] = [];
+    const usedTypes = new Set<string>();
+    
+    for (let i = 0; i < numActions; i++) {
+      // Pick a random action type that hasn't been used this round
+      const availableTypes = actionTypes.filter(t => !usedTypes.has(t));
+      const type = availableTypes[Math.floor(Math.random() * availableTypes.length)];
+      usedTypes.add(type);
+      actions.push({ type, completed: false });
+    }
+    
+    return actions;
+  }, []);
+
+  // Start a new round
+  const startNewRound = useCallback((round: number) => {
+    const actions = generateRoundActions(round);
+    setRoundActions(actions);
+    setShowRoundBanner(true);
+    setRoundPaused(true);
+    
+    // Set the cat's need high for the required action
+    setCats(prev => prev.map(cat => {
+      const newNeeds = { hunger: 20, water: 20, play: 20, attention: 20 };
+      // Set the first action's need to be urgent
+      actions.forEach((action, idx) => {
+        // Stagger the urgency - first action is most urgent
+        newNeeds[action.type] = DISASTER_THRESHOLD + 10 - (idx * 15);
+      });
+      return { ...cat, needs: newNeeds, target: null };
+    }));
+    
+    // Hide banner and unpause after 2 seconds
+    setTimeout(() => {
+      setShowRoundBanner(false);
+      setRoundPaused(false);
+    }, 2000);
+  }, [generateRoundActions]);
+
+  // Check if round is complete - called after updating round actions
+  const checkRoundComplete = useCallback((updatedActions: RoundAction[]) => {
+    const allComplete = updatedActions.length > 0 && updatedActions.every(a => a.completed);
+    if (allComplete && !showRoundBanner) {
+      // Advance to next round
+      const nextRound = currentRound + 1;
+      setCurrentRound(nextRound);
+      
+      // Show completion popup
+      if (cats.length > 0) {
+        addPopup(cats[0].position.x, cats[0].position.y - 50, `Round ${currentRound} Complete! 🎉`);
+      }
+      
+      // Start next round after a brief delay
+      setTimeout(() => {
+        startNewRound(nextRound);
+      }, 1500);
+    }
+  }, [showRoundBanner, currentRound, cats, addPopup, startNewRound]);
 
   // Get most urgent need
   const getMostUrgentNeed = useCallback((cat: Cat): { type: 'hunger' | 'water' | 'play' | 'attention'; value: number; zone?: Zone } => {
@@ -240,7 +317,7 @@ export default function CatChaosGame() {
   }, []);
 
   // Fulfill cat need
-  const fulfillNeed = (catId: string, needType: 'hunger' | 'water' | 'play' | 'attention') => {
+  const fulfillNeed = useCallback((catId: string, needType: 'hunger' | 'water' | 'play' | 'attention') => {
     setCats(prev => prev.map(cat => {
       if (cat.id !== catId) return cat;
 
@@ -271,10 +348,22 @@ export default function CatChaosGame() {
       };
     }));
 
+    // Mark the round action as complete and check for round completion
+    setRoundActions(prev => {
+      const updated = [...prev];
+      const actionIndex = updated.findIndex(a => a.type === needType && !a.completed);
+      if (actionIndex !== -1) {
+        updated[actionIndex] = { ...updated[actionIndex], completed: true };
+      }
+      // Schedule round completion check for after state updates
+      setTimeout(() => checkRoundComplete(updated), 100);
+      return updated;
+    });
+
     setTimeout(() => {
       setCats(prev => prev.map(cat => ({ ...cat, state: 'idle' })));
     }, 600);
-  };
+  }, [addPopup, checkRoundComplete]);
 
   const applyActionSuccess = useCallback((window: ActionWindow) => {
     if (window.type === 'food') {
@@ -406,12 +495,22 @@ export default function CatChaosGame() {
   // Start game
   const startGame = useCallback(() => {
     const pos = getRandomSpawnPosition();
+    
+    // Generate first round actions
+    const firstRoundActions = generateRoundActions(1);
+    
+    // Set initial needs based on round actions
+    const initialNeeds = { hunger: 20, water: 20, play: 20, attention: 20 };
+    firstRoundActions.forEach((action, idx) => {
+      initialNeeds[action.type] = DISASTER_THRESHOLD + 10 - (idx * 15);
+    });
+    
     const initialCats: Cat[] = [{
       id: 'cat-0',
       ...CATS[0],
       position: pos,
       velocity: { x: 0, y: 0 },
-      needs: { hunger: 15, water: 15, play: 15, attention: 15 },
+      needs: initialNeeds,
       state: 'idle',
       target: null,
       personality: 'balanced',
@@ -427,8 +526,18 @@ export default function CatChaosGame() {
     setDisasterMode(false);
     setActiveCatId(null);
     setActionWindow(null);
+    setCurrentRound(1);
+    setRoundActions(firstRoundActions);
+    setShowRoundBanner(true);
+    setRoundPaused(true);
     catIdRef.current = 1;
-  }, []);
+    
+    // Hide banner after 2 seconds
+    setTimeout(() => {
+      setShowRoundBanner(false);
+      setRoundPaused(false);
+    }, 2000);
+  }, [generateRoundActions]);
 
   // SIMPLIFIED MODE: Single cat only - no additional cat spawning
   // TODO: Re-enable cat spawning for full game experience
@@ -461,7 +570,7 @@ export default function CatChaosGame() {
 
   // Game loop (same as before)
   useEffect(() => {
-    if (!gameStarted || gameOver) return;
+    if (!gameStarted || gameOver || roundPaused) return;
 
     const gameLoop = () => {
       setCats(prevCats => {
@@ -628,7 +737,7 @@ export default function CatChaosGame() {
     return () => {
       if (gameLoopRef.current) cancelAnimationFrame(gameLoopRef.current);
     };
-  }, [gameStarted, gameOver, getMostUrgentNeed, score, zones]);
+  }, [gameStarted, gameOver, roundPaused, getMostUrgentNeed, score, zones]);
 
   // Reset fallen objects
   useEffect(() => {
@@ -677,9 +786,27 @@ export default function CatChaosGame() {
             <div className={`text-2xl font-bold ${score <= 25 ? 'text-red-400 animate-pulse' : 'text-amber-300'}`}>
               {score}
             </div>
+            <div className="h-6 w-px bg-stone-600" />
             <div className="text-stone-400 flex items-center gap-2">
-              <span className="text-xl">🐱</span>
-              <span className="font-semibold text-stone-200">{cats.length}</span>
+              <span className="text-sm font-medium">Round</span>
+              <span className="font-bold text-amber-200 text-lg">{currentRound}</span>
+            </div>
+            <div className="h-6 w-px bg-stone-600" />
+            <div className="flex items-center gap-2">
+              {roundActions.map((action, idx) => (
+                <div
+                  key={idx}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+                    action.completed 
+                      ? 'bg-green-500/20 text-green-300 line-through' 
+                      : 'bg-amber-500/20 text-amber-300'
+                  }`}
+                >
+                  <span>{NEED_ICONS[action.type]}</span>
+                  <span className="capitalize">{action.type}</span>
+                  {action.completed && <span>✓</span>}
+                </div>
+              ))}
             </div>
             <div className="h-6 w-px bg-stone-600" />
             <button
@@ -1043,6 +1170,24 @@ export default function CatChaosGame() {
             </svg>
           </div>
         </div>
+
+          {/* Round Banner */}
+          {showRoundBanner && (
+            <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-40 pointer-events-none">
+              <div className="bg-gradient-to-r from-amber-600 to-orange-500 rounded-2xl px-12 py-8 text-center shadow-2xl border-2 border-amber-300 animate-pulse">
+                <div className="text-5xl font-bold text-white mb-2">Round {currentRound}</div>
+                <div className="flex items-center justify-center gap-4 mt-4">
+                  {roundActions.map((action, idx) => (
+                    <div key={idx} className="flex items-center gap-2 bg-white/20 px-4 py-2 rounded-full">
+                      <span className="text-2xl">{NEED_ICONS[action.type]}</span>
+                      <span className="text-white font-semibold capitalize">{action.type}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-amber-100 text-sm mt-4">Complete the actions above!</p>
+              </div>
+            </div>
+          )}
 
           {/* Game Over */}
           {gameOver && (
