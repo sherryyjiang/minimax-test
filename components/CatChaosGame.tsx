@@ -61,8 +61,9 @@ interface ActionWindow {
 }
 
 interface RoundAction {
-  type: 'hunger' | 'water' | 'play' | 'attention';
+  type: 'hunger' | 'water' | 'play' | 'attention' | 'disaster';
   completed: boolean;
+  targetZoneId?: string; // For disaster actions, which object the cat is targeting
 }
 
 function getRandomInt(min: number, max: number) {
@@ -73,11 +74,13 @@ function getRandomInt(min: number, max: number) {
 const GAME_WIDTH = 700;
 const GAME_HEIGHT = 550;
 const CAT_SPEED = 1.0;
-const WANDER_SPEED = 0.25;
+const PLAYER_MOVE_SPEED = 4; // Arrow key movement speed
+const PROXIMITY_RADIUS = 60; // How close cat must be to interact
 const NEED_INCREMENT = 0.4;
 const DISASTER_THRESHOLD = 65;
 const SCOLD_DURATION = 2000;
 const ACTION_WINDOW_MS = 8000;
+const DISASTER_MOVE_SPEED = 1.5; // Speed when cat moves autonomously to destroy
 const ACTION_PRESS_COUNTS = {
   food: 5,
   water: 4,
@@ -86,6 +89,9 @@ const ACTION_PRESS_COUNTS = {
   noNoMin: 3,
   noNoMax: 5,
 };
+
+// Breakable objects for disaster mode
+const BREAKABLE_ZONES = ['vase1', 'vase2', 'lamp', 'mug'];
 
 // Cat data
 const CATS = [
@@ -160,19 +166,22 @@ const NEED_COLORS = {
   attention: { low: '#22c55e', med: '#eab308', high: '#f97316', critical: '#ef4444' },
 };
 
-const NEED_ICONS = {
+const NEED_ICONS: Record<string, string> = {
   hunger: '🍖',
   water: '💧',
   play: '🧶',
   attention: '💕',
+  disaster: '⚠️',
 };
 
 // Get instruction text based on current game state
 const getInstructionText = (
-  activeCatId: string | null,
   actionWindow: ActionWindow | null,
   roundActions: RoundAction[],
-  cats: Cat[]
+  cats: Cat[],
+  isNearTarget: boolean,
+  isDisasterMode: boolean,
+  zones: Zone[]
 ): { line1: string; line2: string } => {
   // Find current uncompleted action
   const currentAction = roundActions.find(a => !a.completed);
@@ -186,13 +195,17 @@ const getInstructionText = (
     return { line1: 'Round Complete!', line2: 'Great job!' };
   }
   
-  const needName = currentAction.type.charAt(0).toUpperCase() + currentAction.type.slice(1);
-  
-  // If no cat is active, tell player to click the cat first
-  if (!activeCatId) {
-    return { 
-      line1: `${cat.name} needs ${needName}!`,
-      line2: 'Click on the cat to select it'
+  // Disaster mode - cat is heading to destroy something
+  if (currentAction.type === 'disaster') {
+    if (isDisasterMode) {
+      return {
+        line1: `${cat.name} is being NAUGHTY!`,
+        line2: 'Press N rapidly to say "NO NO!"'
+      };
+    }
+    return {
+      line1: 'Uh oh! Cat is about to cause trouble!',
+      line2: 'Get ready to stop them!'
     };
   }
   
@@ -202,27 +215,47 @@ const getInstructionText = (
     const keyMap = { food: 'F', water: 'W', play: 'P', pet: 'T', no_no: 'N' };
     const key = keyMap[actionWindow.type];
     return {
-      line1: `Press ${key} to fill!`,
+      line1: `Press ${key} rapidly!`,
       line2: `${remaining} more ${remaining === 1 ? 'press' : 'presses'} needed`
     };
   }
   
+  const needName = currentAction.type.charAt(0).toUpperCase() + currentAction.type.slice(1);
+  
   // Cat is active, give specific instructions based on need
   switch (currentAction.type) {
     case 'hunger':
+      if (isNearTarget) {
+        return {
+          line1: `${cat.name} is at the food bowl!`,
+          line2: 'Press F to fill the bowl'
+        };
+      }
       return {
         line1: `${cat.name} is hungry!`,
-        line2: 'Click the FOOD BOWL, then press F'
+        line2: 'Use ARROW KEYS to move to the food bowl'
       };
     case 'water':
+      if (isNearTarget) {
+        return {
+          line1: `${cat.name} is at the water bowl!`,
+          line2: 'Press W to fill the bowl'
+        };
+      }
       return {
         line1: `${cat.name} is thirsty!`,
-        line2: 'Click the WATER BOWL, then press W'
+        line2: 'Use ARROW KEYS to move to the water bowl'
       };
     case 'play':
+      if (isNearTarget) {
+        return {
+          line1: `${cat.name} found a toy!`,
+          line2: 'Press P to play'
+        };
+      }
       return {
         line1: `${cat.name} wants to play!`,
-        line2: 'Click a TOY, then press P'
+        line2: 'Use ARROW KEYS to move to a toy'
       };
     case 'attention':
       return {
@@ -250,6 +283,10 @@ export default function CatChaosGame() {
   const [roundActions, setRoundActions] = useState<RoundAction[]>([]);
   const [showRoundBanner, setShowRoundBanner] = useState(false);
   const [roundPaused, setRoundPaused] = useState(false);
+  // Movement and disaster state
+  const [keysPressed, setKeysPressed] = useState<Set<string>>(new Set());
+  const [isDisasterMode, setIsDisasterMode] = useState(false);
+  const [wrongActionFeedback, setWrongActionFeedback] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 });
   const gameLoopRef = useRef<number | null>(null);
   const catIdRef = useRef(0);
 
@@ -262,13 +299,71 @@ export default function CatChaosGame() {
     }, 1200);
   }, []);
 
+  // Check if cat is near a specific zone type
+  const isCatNearZone = useCallback((cat: Cat, zoneType: string): { near: boolean; zone?: Zone } => {
+    const targetZones = zones.filter(z => z.type === zoneType || z.id === zoneType);
+    for (const zone of targetZones) {
+      const zoneCenterX = zone.position.x + zone.width / 2;
+      const zoneCenterY = zone.position.y + zone.height / 2;
+      const distance = Math.sqrt(
+        Math.pow(cat.position.x - zoneCenterX, 2) + 
+        Math.pow(cat.position.y - zoneCenterY, 2)
+      );
+      if (distance < PROXIMITY_RADIUS) {
+        return { near: true, zone };
+      }
+    }
+    return { near: false };
+  }, [zones]);
+
+  // Check if cat is near the target for current action
+  const isCatNearCurrentTarget = useCallback((cat: Cat, action: RoundAction | undefined): boolean => {
+    if (!action) return false;
+    switch (action.type) {
+      case 'hunger':
+        return isCatNearZone(cat, 'food_bowl').near;
+      case 'water':
+        return isCatNearZone(cat, 'water_bowl').near;
+      case 'play':
+        return isCatNearZone(cat, 'toy').near;
+      case 'attention':
+        return true; // Always near for attention
+      case 'disaster':
+        return false; // Handled differently
+      default:
+        return false;
+    }
+  }, [isCatNearZone]);
+
+  // Show wrong action feedback
+  const showWrongAction = useCallback((x: number, y: number) => {
+    setWrongActionFeedback({ show: true, x, y });
+    addPopup(x, y - 30, '❌ Wrong action!');
+    setTimeout(() => {
+      setWrongActionFeedback({ show: false, x: 0, y: 0 });
+    }, 800);
+  }, [addPopup]);
+
   // Generate actions for a round based on round number
   const generateRoundActions = useCallback((round: number): RoundAction[] => {
     const actionTypes: Array<'hunger' | 'water' | 'play' | 'attention'> = ['hunger', 'water', 'play', 'attention'];
     
-    // Rounds 1-3: 1-2 actions, simple intro
+    // Round 4+ can have disaster actions
+    // Round 4 is the first disaster round to introduce the mechanic
+    if (round === 4) {
+      const targetZone = BREAKABLE_ZONES[Math.floor(Math.random() * BREAKABLE_ZONES.length)];
+      return [{ type: 'disaster', completed: false, targetZoneId: targetZone }];
+    }
+    
+    // After round 4, mix in disasters occasionally
+    if (round > 4 && round % 3 === 1) {
+      const targetZone = BREAKABLE_ZONES[Math.floor(Math.random() * BREAKABLE_ZONES.length)];
+      return [{ type: 'disaster', completed: false, targetZoneId: targetZone }];
+    }
+    
+    // Rounds 1-3: 1 action, simple intro
     // For simplified single-cat mode, we'll use 1 action per round
-    const numActions = round <= 3 ? 1 : Math.min(2, 1 + Math.floor(round / 4));
+    const numActions = round <= 3 ? 1 : Math.min(2, 1 + Math.floor(round / 5));
     
     const actions: RoundAction[] = [];
     const usedTypes = new Set<string>();
@@ -291,23 +386,53 @@ export default function CatChaosGame() {
     setShowRoundBanner(true);
     setRoundPaused(true);
     
-    // Set the cat's need high for the required action
-    setCats(prev => prev.map(cat => {
-      const newNeeds = { hunger: 20, water: 20, play: 20, attention: 20 };
-      // Set the first action's need to be urgent
-      actions.forEach((action, idx) => {
-        // Stagger the urgency - first action is most urgent
-        newNeeds[action.type] = DISASTER_THRESHOLD + 10 - (idx * 15);
-      });
-      return { ...cat, needs: newNeeds, target: null };
-    }));
+    // Check if this is a disaster round
+    const isDisasterRound = actions.some(a => a.type === 'disaster');
     
-    // Hide banner and unpause after 2 seconds
-    setTimeout(() => {
-      setShowRoundBanner(false);
-      setRoundPaused(false);
-    }, 2000);
-  }, [generateRoundActions]);
+    if (isDisasterRound) {
+      // For disaster rounds, set the cat's target to the breakable object
+      const disasterAction = actions.find(a => a.type === 'disaster');
+      const targetZone = zones.find(z => z.id === disasterAction?.targetZoneId);
+      
+      setCats(prev => prev.map(cat => ({
+        ...cat,
+        needs: { hunger: 20, water: 20, play: 20, attention: 20 },
+        target: targetZone ? {
+          x: targetZone.position.x + targetZone.width / 2,
+          y: targetZone.position.y + targetZone.height / 2 + 30, // Below the object
+        } : null,
+        state: 'idle' as const,
+      })));
+      
+      // Start disaster mode after banner
+      setTimeout(() => {
+        setShowRoundBanner(false);
+        setRoundPaused(false);
+        setIsDisasterMode(true);
+      }, 2000);
+    } else {
+      // Normal round - set the cat's need high for the required action
+      setCats(prev => prev.map(cat => {
+        const newNeeds = { hunger: 20, water: 20, play: 20, attention: 20 };
+        // Set the first action's need to be urgent
+        actions.forEach((action, idx) => {
+          if (action.type !== 'disaster') {
+            // Stagger the urgency - first action is most urgent
+            newNeeds[action.type] = DISASTER_THRESHOLD + 10 - (idx * 15);
+          }
+        });
+        return { ...cat, needs: newNeeds, target: null };
+      }));
+      
+      setIsDisasterMode(false);
+      
+      // Hide banner and unpause after 2 seconds
+      setTimeout(() => {
+        setShowRoundBanner(false);
+        setRoundPaused(false);
+      }, 2000);
+    }
+  }, [generateRoundActions, zones]);
 
   // Check if round is complete - called after updating round actions
   const checkRoundComplete = useCallback((updatedActions: RoundAction[]) => {
@@ -456,15 +581,28 @@ export default function CatChaosGame() {
       fulfillNeed(window.catId, 'attention');
     }
     if (window.type === 'no_no' && window.zoneId) {
+      // Stop the wobbling
       setZones(prev => prev.map(z => z.id === window.zoneId ? { ...z, isWobbling: false, lastNoNoFailAt: undefined } : z));
-      addPopup(
-        cats.find(cat => cat.id === window.catId)?.position.x ?? 0,
-        cats.find(cat => cat.id === window.catId)?.position.y ?? 0,
-        'Saved! ✋'
-      );
+      
+      const cat = cats.find(cat => cat.id === window.catId);
+      addPopup(cat?.position.x ?? 0, cat?.position.y ?? 0, 'NO NO! ✋ +10');
+      setScore(s => s + 10);
+      
+      // If in disaster mode, complete the disaster action
+      if (isDisasterMode) {
+        setIsDisasterMode(false);
+        setCats(prev => prev.map(c => ({ ...c, target: null })));
+        
+        // Mark disaster action as complete
+        setRoundActions(prev => {
+          const updated = prev.map(a => a.type === 'disaster' ? { ...a, completed: true } : a);
+          setTimeout(() => checkRoundComplete(updated), 100);
+          return updated;
+        });
+      }
     }
     clearActionWindow();
-  }, [addPopup, cats, clearActionWindow, fulfillNeed]);
+  }, [addPopup, cats, clearActionWindow, fulfillNeed, isDisasterMode, checkRoundComplete]);
 
   const applyActionFailure = useCallback((window: ActionWindow) => {
     if (window.type === 'food') {
@@ -523,11 +661,52 @@ export default function CatChaosGame() {
     return () => clearInterval(interval);
   }, [actionWindow, applyActionFailure]);
 
+  // Arrow key movement handler
   useEffect(() => {
-    if (!gameStarted || gameOver) return;
-    const handler = (event: KeyboardEvent) => {
-      if (!activeCatId) return;
+    if (!gameStarted || gameOver || roundPaused) return;
+    
+    const handleKeyDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
+      
+      // Arrow key movement (only when not in disaster mode)
+      if (!isDisasterMode && ['arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+        event.preventDefault();
+        setKeysPressed(prev => new Set(prev).add(key));
+        return;
+      }
+    };
+    
+    const handleKeyUp = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+        setKeysPressed(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(key);
+          return newSet;
+        });
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [gameStarted, gameOver, roundPaused, isDisasterMode]);
+
+  // Action key handler
+  useEffect(() => {
+    if (!gameStarted || gameOver || roundPaused) return;
+    
+    const handler = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      const cat = cats[0];
+      if (!cat) return;
+      
+      const currentAction = roundActions.find(a => !a.completed);
+      
+      // Handle action window (mashing keys to complete)
       if (actionWindow) {
         const isCorrectKey =
           (actionWindow.type === 'food' && key === 'f') ||
@@ -542,7 +721,6 @@ export default function CatChaosGame() {
           const foodBowl = zones.find(z => z.id === 'food_bowl');
           if (foodBowl) {
             addPopup(foodBowl.position.x + 30, foodBowl.position.y - 10, '+🍖');
-            // Increment fill level visually
             setZones(prev => prev.map(z => 
               z.id === 'food_bowl' 
                 ? { ...z, fillLevel: Math.min(100, (z.fillLevel || 0) + (100 / ACTION_PRESS_COUNTS.food)) }
@@ -553,7 +731,6 @@ export default function CatChaosGame() {
           const waterBowl = zones.find(z => z.id === 'water_bowl');
           if (waterBowl) {
             addPopup(waterBowl.position.x + 30, waterBowl.position.y - 10, '+💧');
-            // Increment fill level visually
             setZones(prev => prev.map(z => 
               z.id === 'water_bowl' 
                 ? { ...z, fillLevel: Math.min(100, (z.fillLevel || 0) + (100 / ACTION_PRESS_COUNTS.water)) }
@@ -573,25 +750,67 @@ export default function CatChaosGame() {
         });
         return;
       }
-      if (key === 't') {
-        applyActionSuccess({
-          type: 'pet',
-          catId: activeCatId,
-          requiredPresses: 1,
-          currentPresses: 1,
-          expiresAt: Date.now() + ACTION_WINDOW_MS,
-        });
+      
+      // Disaster mode - only N key works
+      if (isDisasterMode && currentAction?.type === 'disaster') {
+        if (key === 'n') {
+          const targetZoneId = currentAction.targetZoneId;
+          if (targetZoneId) {
+            startActionWindow('no_no', cat.id, targetZoneId, 1);
+          }
+        }
         return;
       }
-      if (key === 'n') {
-        const wobblingZone = zones.find(z => z.isWobbling && !z.isFallen);
-        if (!wobblingZone) return;
-        startActionWindow('no_no', activeCatId, wobblingZone.id, 1);
+      
+      // Check if trying to do wrong action
+      const actionTypeForKey = {
+        'f': 'hunger',
+        'w': 'water',
+        'p': 'play',
+        't': 'attention',
+      } as const;
+      
+      if (key in actionTypeForKey) {
+        const attemptedAction = actionTypeForKey[key as keyof typeof actionTypeForKey];
+        
+        // Check if this is the correct action for the current round
+        if (currentAction?.type !== attemptedAction) {
+          showWrongAction(cat.position.x, cat.position.y);
+          return;
+        }
+        
+        // Check proximity for non-attention actions
+        if (attemptedAction !== 'attention') {
+          const isNear = isCatNearCurrentTarget(cat, currentAction);
+          if (!isNear) {
+            addPopup(cat.position.x, cat.position.y - 30, 'Get closer!');
+            return;
+          }
+        }
+        
+        // Start the action
+        if (key === 'f') {
+          startActionWindow('food', cat.id, 'food_bowl');
+        } else if (key === 'w') {
+          startActionWindow('water', cat.id, 'water_bowl');
+        } else if (key === 'p') {
+          startActionWindow('play', cat.id, 'toy1');
+        } else if (key === 't') {
+          // Pet is instant
+          applyActionSuccess({
+            type: 'pet',
+            catId: cat.id,
+            requiredPresses: 1,
+            currentPresses: 1,
+            expiresAt: Date.now() + ACTION_WINDOW_MS,
+          });
+        }
       }
     };
+    
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [activeCatId, actionWindow, applyActionSuccess, gameOver, gameStarted, startActionWindow, zones]);
+  }, [cats, actionWindow, applyActionSuccess, gameOver, gameStarted, roundPaused, startActionWindow, zones, roundActions, isDisasterMode, isCatNearCurrentTarget, showWrongAction, addPopup]);
 
   // Start game
   const startGame = useCallback(() => {
@@ -603,7 +822,9 @@ export default function CatChaosGame() {
     // Set initial needs based on round actions
     const initialNeeds = { hunger: 20, water: 20, play: 20, attention: 20 };
     firstRoundActions.forEach((action, idx) => {
-      initialNeeds[action.type] = DISASTER_THRESHOLD + 10 - (idx * 15);
+      if (action.type !== 'disaster') {
+        initialNeeds[action.type] = DISASTER_THRESHOLD + 10 - (idx * 15);
+      }
     });
     
     const initialCats: Cat[] = [{
@@ -669,14 +890,14 @@ export default function CatChaosGame() {
   //   return () => clearInterval(interval);
   // }, [gameStarted, gameOver, addPopup]);
 
-  // Game loop (same as before)
+  // Game loop - handles movement and disaster mode
   useEffect(() => {
     if (!gameStarted || gameOver || roundPaused) return;
 
     const gameLoop = () => {
       setCats(prevCats => {
-        let newScore = score;
         let disasterOccurred = false;
+        const currentAction = roundActions.find(a => !a.completed);
 
         const updatedCats: Cat[] = prevCats.map(cat => {
           if (cat.state === 'scolded') {
@@ -686,115 +907,62 @@ export default function CatChaosGame() {
             return cat;
           }
 
-          const newNeeds = {
-            hunger: Math.min(100, cat.needs.hunger + NEED_INCREMENT),
-            water: Math.min(100, cat.needs.water + NEED_INCREMENT),
-            play: Math.min(100, cat.needs.play + NEED_INCREMENT),
-            attention: Math.min(100, cat.needs.attention + NEED_INCREMENT),
-          };
-
-          const urgent = getMostUrgentNeed({ ...cat, needs: newNeeds });
           let newPosition = { ...cat.position };
-          let newTarget = cat.target;
           let newVelocity = { ...cat.velocity };
-          const now = Date.now();
+          let newTarget = cat.target;
 
-          if (cat.state === 'idle' && now - cat.lastMoveTime > 4000 && Math.random() < 0.015) {
-            const wanderAngle = Math.random() * Math.PI * 2;
-            newVelocity = {
-              x: Math.cos(wanderAngle) * WANDER_SPEED,
-              y: Math.sin(wanderAngle) * WANDER_SPEED,
-            };
-            newTarget = null;
-          }
-
-          if (urgent.value > DISASTER_THRESHOLD && cat.state === 'idle' && urgent.zone) {
-            if (!cat.target) {
-              const offsetX = (Math.random() - 0.5) * 35;
-              const offsetY = (Math.random() - 0.5) * 25;
-              newTarget = {
-                x: urgent.zone.position.x + urgent.zone.width / 2 + offsetX,
-                y: urgent.zone.position.y + urgent.zone.height / 2 + offsetY,
-              };
-            }
-          }
-
-          if (newTarget && cat.state === 'idle') {
-            const target = newTarget;
+          // DISASTER MODE: Cat moves autonomously towards target
+          if (isDisasterMode && currentAction?.type === 'disaster' && cat.target) {
+            const target = cat.target;
             const dx = target.x - cat.position.x;
             const dy = target.y - cat.position.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
 
-            if (dist > 5) {
-              const speed = cat.personality === 'mischievous' ? CAT_SPEED * 1.3 : CAT_SPEED;
+            if (dist > 10) {
               newPosition = {
-                x: cat.position.x + (dx / dist) * speed,
-                y: cat.position.y + (dy / dist) * speed,
+                x: cat.position.x + (dx / dist) * DISASTER_MOVE_SPEED,
+                y: cat.position.y + (dy / dist) * DISASTER_MOVE_SPEED,
               };
             } else {
-              const zone = zones.find(z =>
-                Math.abs(z.position.x + (z.width || 0)/2 - target.x) < 50 &&
-                Math.abs(z.position.y + (z.height || 0)/2 - target.y) < 50
-              );
-
-              if (zone && (zone.type === 'vase' || zone.type === 'lamp' || zone.type === 'mug')) {
+              // Cat reached the target - start wobbling the object
+              const targetZone = zones.find(z => z.id === currentAction.targetZoneId);
+              if (targetZone && !targetZone.isWobbling && !targetZone.isFallen) {
                 setZones(prevZ => prevZ.map(z => {
-                  if (z.id === zone.id && !z.isWobbling && !z.isFallen) {
+                  if (z.id === currentAction.targetZoneId) {
                     return { ...z, isWobbling: true };
                   }
                   return z;
                 }));
               }
-
-              if (zone?.type === 'food_bowl' && !zone.isEmpty) {
-                newNeeds.hunger = Math.max(0, newNeeds.hunger - 40);
-                setZones(prevZ => prevZ.map(z => {
-                  if (z.id === 'food_bowl') {
-                    const newLevel = (z.fillLevel || 0) - 35;
-                    if (newLevel <= 0) return { ...z, fillLevel: 0, isEmpty: true };
-                    return { ...z, fillLevel: newLevel };
-                  }
-                  return z;
-                }));
-                newTarget = null;
-              } else if (zone?.type === 'food_bowl' && zone.isEmpty) {
-                newTarget = null;
-              }
-
-              if (zone?.type === 'water_bowl' && (zone.fillLevel || 0) > 0) {
-                newNeeds.water = Math.max(0, newNeeds.water - 40);
-                setZones(prevZ => prevZ.map(z => {
-                  if (z.id === 'water_bowl') {
-                    const newLevel = (z.fillLevel || 0) - 35;
-                    return { ...z, fillLevel: Math.max(0, newLevel) };
-                  }
-                  return z;
-                }));
-                newTarget = null;
-              } else if (zone?.type === 'water_bowl' && (zone.fillLevel || 0) <= 0) {
-                newTarget = null;
-              }
-
-              if (!newTarget) {
-                newVelocity = { x: 0, y: 0 };
-              }
             }
-          }
+          } 
+          // PLAYER CONTROL MODE: Move cat with arrow keys
+          else if (!isDisasterMode) {
+            let moveX = 0;
+            let moveY = 0;
 
-          if (newVelocity.x !== 0 || newVelocity.y !== 0) {
-            newPosition = {
-              x: Math.max(50, Math.min(GAME_WIDTH - 50, cat.position.x + newVelocity.x)),
-              y: Math.max(90, Math.min(GAME_HEIGHT - 50, cat.position.y + newVelocity.y)),
-            };
-            newVelocity = {
-              x: newVelocity.x * 0.97,
-              y: newVelocity.y * 0.97,
-            };
+            if (keysPressed.has('arrowup')) moveY -= PLAYER_MOVE_SPEED;
+            if (keysPressed.has('arrowdown')) moveY += PLAYER_MOVE_SPEED;
+            if (keysPressed.has('arrowleft')) moveX -= PLAYER_MOVE_SPEED;
+            if (keysPressed.has('arrowright')) moveX += PLAYER_MOVE_SPEED;
+
+            if (moveX !== 0 || moveY !== 0) {
+              // Normalize diagonal movement
+              if (moveX !== 0 && moveY !== 0) {
+                const factor = 0.707; // 1/sqrt(2)
+                moveX *= factor;
+                moveY *= factor;
+              }
+
+              newPosition = {
+                x: Math.max(50, Math.min(GAME_WIDTH - 50, cat.position.x + moveX)),
+                y: Math.max(150, Math.min(GAME_HEIGHT - 100, cat.position.y + moveY)),
+              };
+            }
           }
 
           return {
             ...cat,
-            needs: newNeeds,
             position: newPosition,
             velocity: newVelocity,
             target: newTarget,
@@ -802,17 +970,33 @@ export default function CatChaosGame() {
           } as Cat;
         });
 
+        // Check for wobbling objects that might fall
         zones.forEach(zone => {
           if (zone.isWobbling && !zone.isFallen) {
-            if (Math.random() < 0.012) {
+            // In disaster mode, object falls faster if player doesn't stop it
+            const fallChance = isDisasterMode ? 0.008 : 0.004;
+            if (Math.random() < fallChance) {
               setZones(prevZ => prevZ.map(z => {
                 if (z.id === zone.id) {
                   disasterOccurred = true;
-                  newScore -= 15;
                   return { ...z, isWobbling: false, isFallen: true };
                 }
                 return z;
               }));
+              
+              // Fail the disaster action
+              if (isDisasterMode && currentAction?.type === 'disaster') {
+                setScore(s => s - 15);
+                addPopup(prevCats[0]?.position.x || 350, prevCats[0]?.position.y || 300, '-15 💔');
+                
+                // Mark disaster as "completed" (failed) and move to next round
+                setRoundActions(prev => {
+                  const updated = prev.map(a => a.type === 'disaster' ? { ...a, completed: true } : a);
+                  setTimeout(() => checkRoundComplete(updated), 100);
+                  return updated;
+                });
+                setIsDisasterMode(false);
+              }
             }
           }
         });
@@ -822,7 +1006,7 @@ export default function CatChaosGame() {
           setTimeout(() => setDisasterMode(false), 400);
         }
 
-        if (newScore <= 0) {
+        if (score <= 0) {
           setGameOver(true);
           return prevCats;
         }
@@ -838,7 +1022,7 @@ export default function CatChaosGame() {
     return () => {
       if (gameLoopRef.current) cancelAnimationFrame(gameLoopRef.current);
     };
-  }, [gameStarted, gameOver, roundPaused, getMostUrgentNeed, score, zones]);
+  }, [gameStarted, gameOver, roundPaused, score, zones, keysPressed, isDisasterMode, roundActions, addPopup, checkRoundComplete]);
 
   // Reset fallen objects
   useEffect(() => {
@@ -864,14 +1048,16 @@ export default function CatChaosGame() {
         <div className="flex flex-col items-center gap-6 bg-stone-800/90 p-10 rounded-2xl shadow-2xl border border-stone-700">
           <div className="text-7xl mb-2">🏠🐱</div>
           <p className="text-stone-200 text-center max-w-md text-lg">
-            Your cats are hungry, bored, and needy! Feed them, play with them,
-            give them attention, and protect your stuff from chaos!
+            Guide your cat around the room to fulfill their needs!
+            Move to items and press keys to interact.
           </p>
           <div className="grid grid-cols-2 gap-4 text-stone-300 text-sm">
-            <div className="flex items-center gap-2"><span className="text-2xl">🖱️</span> Click a cat to activate</div>
-            <div className="flex items-center gap-2"><span className="text-2xl">🥣</span> Click bowl, then press F/W</div>
-            <div className="flex items-center gap-2"><span className="text-2xl">🎾</span> Click toy, then press P</div>
-            <div className="flex items-center gap-2"><span className="text-2xl">✋</span> Press N to stop chaos</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">⬆️⬇️⬅️➡️</span> Arrow keys to move</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">🍖</span> At food bowl → Press F</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">💧</span> At water bowl → Press W</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">🧶</span> At toy → Press P</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">💕</span> Pet anywhere → Press T</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">✋</span> Stop mischief → Press N</div>
           </div>
           <button
             onClick={startGame}
@@ -1024,24 +1210,27 @@ export default function CatChaosGame() {
 
               {(() => {
                 const currentAction = roundActions.find(a => !a.completed);
-                const shouldHighlightFood = activeCatId && !actionWindow && currentAction?.type === 'hunger';
-                const shouldHighlightWater = activeCatId && !actionWindow && currentAction?.type === 'water';
-                const shouldHighlightToys = activeCatId && !actionWindow && currentAction?.type === 'play';
+                const cat = cats[0];
+                const shouldHighlightFood = !actionWindow && currentAction?.type === 'hunger';
+                const shouldHighlightWater = !actionWindow && currentAction?.type === 'water';
+                const shouldHighlightToys = !actionWindow && currentAction?.type === 'play';
+                const isNearFood = cat ? isCatNearZone(cat, 'food_bowl').near : false;
+                const isNearWater = cat ? isCatNearZone(cat, 'water_bowl').near : false;
+                const isNearToy = cat ? isCatNearZone(cat, 'toy').near : false;
                 
                 return (
                   <>
                     {/* Food & Water Bowls */}
-                    <g
-                      filter="url(#furnitureShadow)"
-                      onClick={() => {
-                        if (!activeCatId || actionWindow) return;
-                        startActionWindow('food', activeCatId, 'food_bowl');
-                      }}
-                      className="cursor-pointer"
-                    >
-                      {/* Highlight ring for food bowl */}
+                    <g filter="url(#furnitureShadow)">
+                      {/* Highlight ring for food bowl - changes color when cat is near */}
                       {shouldHighlightFood && (
-                        <circle cx={77} cy={420} r="40" fill="none" stroke="#fbbf24" strokeWidth="4" opacity="0.8">
+                        <circle 
+                          cx={77} cy={420} r="40" 
+                          fill="none" 
+                          stroke={isNearFood ? "#22c55e" : "#fbbf24"} 
+                          strokeWidth="4" 
+                          opacity="0.8"
+                        >
                           <animate attributeName="r" values="35;45;35" dur="1s" repeatCount="indefinite" />
                           <animate attributeName="opacity" values="0.9;0.4;0.9" dur="1s" repeatCount="indefinite" />
                         </circle>
@@ -1049,22 +1238,21 @@ export default function CatChaosGame() {
                       <FoodBowl x={50} y={400} fillLevel={zones.find(z => z.id === 'food_bowl')?.fillLevel || 0} isEmpty={zones.find(z => z.id === 'food_bowl')?.isEmpty ?? true} />
                       <ElementLabel x={80} y={460} label="Food Bowl" visible={showLabels} />
                       {shouldHighlightFood && (
-                        <text x={77} y={380} textAnchor="middle" fontSize="12" fill="#fbbf24" fontWeight="bold">
-                          CLICK HERE
+                        <text x={77} y={380} textAnchor="middle" fontSize="12" fill={isNearFood ? "#22c55e" : "#fbbf24"} fontWeight="bold">
+                          {isNearFood ? 'Press F!' : 'Move here'}
                         </text>
                       )}
                     </g>
-                    <g
-                      filter="url(#furnitureShadow)"
-                      onClick={() => {
-                        if (!activeCatId || actionWindow) return;
-                        startActionWindow('water', activeCatId, 'water_bowl');
-                      }}
-                      className="cursor-pointer"
-                    >
+                    <g filter="url(#furnitureShadow)">
                       {/* Highlight ring for water bowl */}
                       {shouldHighlightWater && (
-                        <circle cx={157} cy={420} r="40" fill="none" stroke="#3b82f6" strokeWidth="4" opacity="0.8">
+                        <circle 
+                          cx={157} cy={420} r="40" 
+                          fill="none" 
+                          stroke={isNearWater ? "#22c55e" : "#3b82f6"} 
+                          strokeWidth="4" 
+                          opacity="0.8"
+                        >
                           <animate attributeName="r" values="35;45;35" dur="1s" repeatCount="indefinite" />
                           <animate attributeName="opacity" values="0.9;0.4;0.9" dur="1s" repeatCount="indefinite" />
                         </circle>
@@ -1072,54 +1260,54 @@ export default function CatChaosGame() {
                       <WaterBowl x={130} y={400} fillLevel={zones.find(z => z.id === 'water_bowl')?.fillLevel || 100} />
                       <ElementLabel x={160} y={460} label="Water Bowl" visible={showLabels} />
                       {shouldHighlightWater && (
-                        <text x={157} y={380} textAnchor="middle" fontSize="12" fill="#3b82f6" fontWeight="bold">
-                          CLICK HERE
+                        <text x={157} y={380} textAnchor="middle" fontSize="12" fill={isNearWater ? "#22c55e" : "#3b82f6"} fontWeight="bold">
+                          {isNearWater ? 'Press W!' : 'Move here'}
                         </text>
                       )}
                     </g>
 
                     {/* Toys */}
                     <g style={{ opacity: 0.9 }}>
-                      <g
-                        onClick={() => {
-                          if (!activeCatId || actionWindow) return;
-                          startActionWindow('play', activeCatId, 'toy1');
-                        }}
-                        className="cursor-pointer"
-                      >
+                      <g>
                         {/* Highlight ring for toy */}
                         {shouldHighlightToys && (
-                          <circle cx={367} cy={377} r="30" fill="none" stroke="#22c55e" strokeWidth="4" opacity="0.8">
+                          <circle 
+                            cx={367} cy={377} r="30" 
+                            fill="none" 
+                            stroke={isNearToy ? "#22c55e" : "#a855f7"} 
+                            strokeWidth="4" 
+                            opacity="0.8"
+                          >
                             <animate attributeName="r" values="25;35;25" dur="1s" repeatCount="indefinite" />
                             <animate attributeName="opacity" values="0.9;0.4;0.9" dur="1s" repeatCount="indefinite" />
                           </circle>
                         )}
                         <ToyBall x={350} y={360} />
                         {shouldHighlightToys && (
-                          <text x={367} y={340} textAnchor="middle" fontSize="11" fill="#22c55e" fontWeight="bold">
-                            CLICK
+                          <text x={367} y={340} textAnchor="middle" fontSize="11" fill={isNearToy ? "#22c55e" : "#a855f7"} fontWeight="bold">
+                            {isNearToy ? 'Press P!' : 'Move'}
                           </text>
                         )}
                       </g>
                       <ElementLabel x={370} y={405} label="Ball Toy" visible={showLabels} />
-                      <g
-                        onClick={() => {
-                          if (!activeCatId || actionWindow) return;
-                          startActionWindow('play', activeCatId, 'toy2');
-                        }}
-                        className="cursor-pointer"
-                      >
+                      <g>
                         {/* Highlight ring for yarn */}
                         {shouldHighlightToys && (
-                          <circle cx={477} cy={442} r="30" fill="none" stroke="#22c55e" strokeWidth="4" opacity="0.8">
+                          <circle 
+                            cx={477} cy={442} r="30" 
+                            fill="none" 
+                            stroke={isNearToy ? "#22c55e" : "#a855f7"} 
+                            strokeWidth="4" 
+                            opacity="0.8"
+                          >
                             <animate attributeName="r" values="25;35;25" dur="1s" repeatCount="indefinite" />
                             <animate attributeName="opacity" values="0.9;0.4;0.9" dur="1s" repeatCount="indefinite" />
                           </circle>
                         )}
                         <YarnBall x={460} y={425} />
                         {shouldHighlightToys && (
-                          <text x={477} y={408} textAnchor="middle" fontSize="11" fill="#22c55e" fontWeight="bold">
-                            CLICK
+                          <text x={477} y={408} textAnchor="middle" fontSize="11" fill={isNearToy ? "#22c55e" : "#a855f7"} fontWeight="bold">
+                            {isNearToy ? 'Press P!' : 'Move'}
                           </text>
                         )}
                       </g>
@@ -1205,15 +1393,26 @@ export default function CatChaosGame() {
                 return (
                   <g
                     key={cat.id}
-                    className="cursor-pointer"
-                    onClick={() => {
-                      if (actionWindow) return;
-                      setActiveCatId(cat.id);
-                    }}
                     style={{ zIndex: Math.floor(cat.position.y) }}
                   >
-                    {/* Active cat selection glow */}
-                    {activeCatId === cat.id && (
+                    {/* Disaster mode - cat has red glow and is being naughty */}
+                    {isDisasterMode && (
+                      <circle
+                        cx={cat.position.x}
+                        cy={cat.position.y + 10}
+                        r="50"
+                        fill="none"
+                        stroke="#ef4444"
+                        strokeWidth="4"
+                        opacity="0.8"
+                      >
+                        <animate attributeName="r" values="45;55;45" dur="0.5s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="0.8;0.4;0.8" dur="0.5s" repeatCount="indefinite" />
+                      </circle>
+                    )}
+                    
+                    {/* Normal mode - selection glow */}
+                    {!isDisasterMode && (
                       <circle
                         cx={cat.position.x}
                         cy={cat.position.y + 10}
@@ -1232,6 +1431,16 @@ export default function CatChaosGame() {
                     <g filter="url(#catShadow)">
                       <CatSprite emoji={cat.emoji} x={cat.position.x} y={cat.position.y} state={cat.state} />
                     </g>
+                    
+                    {/* Disaster mode thought bubble */}
+                    {isDisasterMode && (
+                      <g transform={`translate(${cat.position.x + 30}, ${cat.position.y - 50})`}>
+                        <ellipse cx="0" cy="0" rx="35" ry="20" fill="white" stroke="#333" strokeWidth="2" />
+                        <circle cx="-25" cy="15" r="5" fill="white" stroke="#333" strokeWidth="1" />
+                        <circle cx="-32" cy="22" r="3" fill="white" stroke="#333" strokeWidth="1" />
+                        <text x="0" y="5" textAnchor="middle" fontSize="14" fontWeight="bold">😈 Hehe!</text>
+                      </g>
+                    )}
 
                     {/* Need indicators */}
                     <g transform={`translate(${cat.position.x - 64}, ${cat.position.y - 80})`}>
@@ -1275,15 +1484,29 @@ export default function CatChaosGame() {
               {/* Popups */}
               {popups.map(popup => (
                 <g key={popup.id} transform={`translate(${popup.x}, ${popup.y})`}>
-                  <text textAnchor="middle" fontSize="18" fontWeight="bold" fill={popup.value.includes('-') ? '#ef4444' : '#22c55e'} filter="url(#catShadow)">
+                  <text textAnchor="middle" fontSize="18" fontWeight="bold" fill={popup.value.includes('-') || popup.value.includes('❌') || popup.value.includes('Wrong') ? '#ef4444' : '#22c55e'} filter="url(#catShadow)">
                     {popup.value}
                   </text>
                 </g>
               ))}
+              
+              {/* Wrong action feedback - red X */}
+              {wrongActionFeedback.show && (
+                <g transform={`translate(${wrongActionFeedback.x}, ${wrongActionFeedback.y})`}>
+                  <circle r="40" fill="#ef4444" opacity="0.3">
+                    <animate attributeName="r" values="30;50;30" dur="0.3s" repeatCount="2" />
+                    <animate attributeName="opacity" values="0.5;0.1;0.5" dur="0.3s" repeatCount="2" />
+                  </circle>
+                  <text textAnchor="middle" y="10" fontSize="40" fontWeight="bold" fill="#ef4444">✗</text>
+                </g>
+              )}
 
               {/* ==================== PIXEL-STYLE INSTRUCTION BOX ==================== */}
               {(() => {
-                const instruction = getInstructionText(activeCatId, actionWindow, roundActions, cats);
+                const currentAction = roundActions.find(a => !a.completed);
+                const cat = cats[0];
+                const isNearTarget = cat ? isCatNearCurrentTarget(cat, currentAction) : false;
+                const instruction = getInstructionText(actionWindow, roundActions, cats, isNearTarget, isDisasterMode, zones);
                 return (
                   <g transform={`translate(${GAME_WIDTH / 2}, ${GAME_HEIGHT - 45})`}>
                     {/* Pixel-style box background */}
