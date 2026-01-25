@@ -83,8 +83,8 @@ const ACTION_WINDOW_MS = 8000;
 const DISASTER_MOVE_SPEED = 1.5; // Speed when cat moves autonomously to destroy
 
 // Round timer settings - creates urgency!
-const ROUND_TIMER_BASE_SECONDS = 25; // Base time for a single action
-const ROUND_TIMER_PER_ACTION_SECONDS = 12; // Additional time per extra action
+const ROUND_TIMER_BASE_SECONDS = 15; // Base time for a single action (reduced for more challenge)
+const ROUND_TIMER_PER_ACTION_SECONDS = 8; // Additional time per extra action (reduced for more challenge)
 const TIMER_SPEED_MULTIPLIERS: Record<string, number> = {
   intro: 1.0,    // Rounds 1-3
   early: 0.95,   // Rounds 4-8
@@ -316,6 +316,12 @@ export default function CatChaosGame() {
   const [wrongActionFeedback, setWrongActionFeedback] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 });
   const gameLoopRef = useRef<number | null>(null);
   const catIdRef = useRef(0);
+  const catsRef = useRef<Cat[]>([]); // Ref to access cats without causing re-renders
+
+  // Keep catsRef in sync with cats state
+  useEffect(() => {
+    catsRef.current = cats;
+  }, [cats]);
 
   // Add popup
   const addPopup = useCallback((x: number, y: number, value: string) => {
@@ -997,8 +1003,8 @@ export default function CatChaosGame() {
           }
 
           let newPosition = { ...cat.position };
-          let newVelocity = { ...cat.velocity };
-          let newTarget = cat.target;
+          const newVelocity = { ...cat.velocity };
+          const newTarget = cat.target;
 
           // DISASTER MODE: Cat moves autonomously towards target
           if (isDisasterMode && currentAction?.type === 'disaster' && cat.target) {
@@ -1114,6 +1120,7 @@ export default function CatChaosGame() {
   }, [gameStarted, gameOver, roundPaused, score, zones, keysPressed, isDisasterMode, roundActions, addPopup, checkRoundComplete]);
 
   // Round timer countdown effect
+  // IMPORTANT: Do NOT include cats in dependencies - it changes every frame and would reset the interval
   useEffect(() => {
     if (!roundTimerActive || roundPaused || gameOver || !gameStarted) return;
     
@@ -1147,8 +1154,10 @@ export default function CatChaosGame() {
           
           if (totalPenalty > 0) {
             setScore(s => Math.max(0, s - totalPenalty));
-            if (cats.length > 0) {
-              addPopup(cats[0].position.x, cats[0].position.y - 40, `TIME'S UP! -${totalPenalty}`);
+            // Use catsRef instead of cats to avoid dependency issues
+            const currentCats = catsRef.current;
+            if (currentCats.length > 0) {
+              addPopup(currentCats[0].position.x, currentCats[0].position.y - 40, `TIME'S UP! -${totalPenalty}`);
             }
           }
           
@@ -1179,7 +1188,7 @@ export default function CatChaosGame() {
     }, 100);
     
     return () => clearInterval(interval);
-  }, [roundTimerActive, roundPaused, gameOver, gameStarted, roundTimerTotal, roundActions, cats, addPopup, currentRound, startNewRound]);
+  }, [roundTimerActive, roundPaused, gameOver, gameStarted, roundTimerTotal, roundActions, addPopup, currentRound, startNewRound]);
 
   // Reset fallen objects
   useEffect(() => {
