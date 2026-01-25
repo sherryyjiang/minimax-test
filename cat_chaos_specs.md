@@ -34,7 +34,7 @@ A web-based chaos management game where players manage increasingly demanding ca
 
 1. Cats spawn with various needs (hunger, play, attention)
 2. Player uses right panel to manage cats + game board for food/water
-3. "No No" button prevents disasters (requires rapid clicking)
+3. "No No" prevents disasters (requires rapid `N` presses, no selection needed)
 4. Score increases from good actions, decreases from disasters
 5. Points-only penalties and rewards (no mood tracking)
 6. Game ends when score ≤ 0 (or player quits)
@@ -45,11 +45,11 @@ A web-based chaos management game where players manage increasingly demanding ca
 
 | Action | Location | See |
 |--------|----------|-----|
-| Feed (food bowl clicks) | Game board | Gameplay doc |
-| Fill water (bowl clicks) | Game board | Gameplay doc |
-| Play with cat | Right panel | Gameplay doc |
-| Pet cat | Right panel | Gameplay doc |
-| Prevent disaster (No No) | Right panel | Gameplay doc |
+| Feed (move + F) | Game board + keyboard | Gameplay doc |
+| Fill water (move + W) | Game board + keyboard | Gameplay doc |
+| Play with cat (move + P) | Game board + keyboard | Gameplay doc |
+| Pet cat | Keyboard | Gameplay doc |
+| Prevent disaster (No No) | Keyboard (any cat) | Gameplay doc |
 | Pause game | Top right | Gameplay doc |
 | View score/events | Top center + log | Gameplay doc |
 | Cat movement system | Game board | Gameplay doc |
@@ -133,7 +133,7 @@ A web-based chaos management game where players manage increasingly demanding ca
 ### Phase 1: Core Mechanics
 - Right panel with cat cards
 - Single primary action button per cat
-- Food/water bowl clicking on game board
+- Food/water actions via movement + action keys
 - Cat movement toward targets
 - Basic timer system
 - Score display and logging

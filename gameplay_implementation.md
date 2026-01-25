@@ -12,6 +12,7 @@ This file tracks incremental build steps for the game. Specs stay in
 - No additional cats spawn over time
 - All core mechanics remain active (needs, bowls, toys, disasters)
 - **Round system implemented:** Each round has specific actions to complete
+- **Input model:** arrow keys to move; action keys to complete (no click-and-mash)
 - Perfect for testing individual action flows without distraction
 
 ### Round System (Implemented):
@@ -46,18 +47,18 @@ This file tracks incremental build steps for the game. Specs stay in
 - [ ] Active Cat selection + keyboard wiring (highlight, instruction line,
   clear on completion) — Files: `components/CatChaosGame.tsx` | Automated: lint
   | Manual: click cat, press keys, verify active clears.
-- [ ] Food bowl flow (click bowl → press `F` ×N, progress + timeout) — Files:
+- [ ] Food flow (move to bowl → press `F` ×N, progress + timeout) — Files:
   `components/CatChaosGame.tsx`, `components/RoomAssets.tsx` | Automated: lint
   | Manual: complete feed + fail case.
-- [ ] Water bowl flow (click bowl → press `W` ×N, progress + timeout) — Files:
+- [ ] Water flow (move to bowl → press `W` ×N, progress + timeout) — Files:
   `components/CatChaosGame.tsx`, `components/RoomAssets.tsx` | Automated: lint
   | Manual: complete water + fail case.
-- [ ] Play flow (click toy → press `P` ×N, progress + timeout) — Files:
+- [ ] Play flow (move to toy → press `P` ×N, progress + timeout) — Files:
   `components/CatChaosGame.tsx`, `components/RoomAssets.tsx` | Automated: lint
   | Manual: complete play + fail case.
-- [ ] Pet flow (press `T` on Active Cat, progress if needed) — Files:
+- [ ] Pet flow (press `T`, progress if needed) — Files:
   `components/CatChaosGame.tsx` | Automated: lint | Manual: pet success/fail.
-- [ ] No No flow (`N` presses, warning → break) — Files:
+- [ ] No No flow (`N` presses, fails when cat reaches item, no success points) — Files:
   `components/CatChaosGame.tsx`, `components/RoomAssets.tsx` | Automated: lint
   | Manual: prevent + miss twice.
 - [ ] Scoring + streak + event log — Files: `components/CatChaosGame.tsx`

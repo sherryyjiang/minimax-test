@@ -32,7 +32,7 @@ export function RoomFloor() {
 }
 
 // Back wall with atmospheric perspective
-export function BackWall({ width = 700, height = 550 }: { width?: number; height?: number }) {
+export function BackWall({ width = 700 }: { width?: number }) {
   return (
     <g>
       {/* Main wall with subtle gradient for depth */}
@@ -845,6 +845,7 @@ export function YarnBall({ x, y }: { x: number; y: number }) {
 export function CatSprite({ emoji, x, y, state = "idle", scale = 1 }: { emoji: string; x: number; y: number; state?: string; scale?: number }) {
   const bounce = state === "playing" ? { animation: "catBounce 0.3s ease-in-out infinite" } : {};
   const pulse = state === "purring" ? { animation: "catPulse 0.5s ease-in-out infinite" } : {};
+  const animationStyle = { ...bounce, ...pulse };
 
   // Color mapping for cats
   const catColors: Record<string, { body: string; stripe: string; collar: string; eye: string }> = {
@@ -864,7 +865,7 @@ export function CatSprite({ emoji, x, y, state = "idle", scale = 1 }: { emoji: s
       <ellipse cx="30" cy="55" rx="25" ry="10" fill="#000" opacity="0.2" />
 
       {/* Cat body */}
-      <g style={bounce}>
+      <g style={animationStyle}>
         {/* Body outline */}
         <ellipse cx="30" cy="38" rx="26" ry="22" fill="rgba(0,0,0,0.1)" />
         <ellipse cx="30" cy="38" rx="24" ry="20" fill={colors.body} />

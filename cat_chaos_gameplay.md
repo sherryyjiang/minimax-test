@@ -11,10 +11,10 @@ This document extends `cat_chaos_specs.md` with complete gameplay mechanics, UI 
 ```
 ┌─────────────────────────────────────┐
 │ 🐱 MOCHI             (ACTIVE)     │
-│ 😿 Hunger              ⏱️ 12s     │
-│ ███████░░ 5 presses needed        │
-│ [ FEED ]  Click bowl + press F×5  │
-│ [ NO NO ]  Press N×4 (if active)  │
+│ 😿 Hunger              ⏱️ 9s      │
+│ ███████░░ 5 presses needed         │
+│ [ FEED ]  Move to bowl + press F×5 │
+│ [ NO NO ]  Press N×4 (any cat)     │
 │                                   │
 │ Streak: ✨ 3                      │
 └─────────────────────────────────────┘
@@ -32,54 +32,59 @@ Each cat card shows:
 - Sort by urgency (most urgent at top)
 - Ties keep spawn order
 - Each cat has ONE primary action button (not multiple)
-- "No No" uses the `N` key for rapid presses (see Active Cat Mode)
+- "No No" uses the `N` key for rapid presses; works on any cat (one per round)
 - Urgent needs (≤ 5s) pulse and show a small "URGENT" tag to focus attention
-- Primary action button always initiates the action:
-  - For bowls, it highlights the active bowl and starts the click window
-  - For play, it highlights the toy area and starts the input window
-  - For pet, it highlights the Active Cat
-  - For "No No", it opens the rapid-press window
+- Primary action button shows the required action key
 - Clicking a cat card makes that cat the Active Cat
-- Active Cat shows a stronger highlight and an instruction line (e.g., "Press P to play")
+- Active Cat shows a stronger highlight and an instruction line (e.g., "Press F to feed")
+
+### Action Input Model (Single Cat)
+
+- No click-and-mash actions in single cat mode
+- Use arrow keys to move the cat to the target
+- Use action keys to complete the task once in front of the target
+- `N` handles disaster prevention (no selection required)
 
 ### Game Board Actions
 
 **Food Bowl:**
-- Activates when the player clicks the bowl while a cat is Active
-- Shows required clicks (e.g., "×5" based on hungry cats)
-- User clicks the bowl once, then presses `F` rapidly to fill during the active window
+- Activates when the cat is in front of the food bowl
+- Shows required `F` presses (e.g., "×5" based on hungry cats)
+- Player presses `F` rapidly to fill during the active window
 - Only one bowl action can be active at a time
 - Fail if incomplete when timer ends
 - Feedback: "+10 🍖" per successful fill
 
 **Water Bowl:**
-- Same as food bowl mechanics (click bowl, then press `W`)
+- Same as food bowl mechanics (`W` presses)
 - Feedback: "+5 💧" per successful fill
 
 **Toy Area:**
-- Activates when the player clicks a toy while a cat is Active
-- User clicks the toy once, then presses `P` rapidly to complete play
+- Activates when the cat is in front of a toy
+- Player presses `P` rapidly to complete play
 - Only one toy action can be active at a time
 - Fail if incomplete when timer ends
 - Feedback: "+12 🎾" per successful play
 
 **Disaster Prevention:**
 - Cat approaching fragile object → "!" appears above cat
-- With the cat Active, press `N` rapidly to prevent
+- Press `N` rapidly to prevent (works on any cat)
 - Each `N` press shows visual feedback (checkmark or remaining)
-- Fail = object falls, -15 points
+- Only one disaster event can occur per round
+- If the cat reaches the object before enough `N` presses, the object breaks and points are deducted
 
 ### Active Cat Mode
 - Only one cat can be Active at a time
 - Clicking a cat (card or avatar) sets Active Cat
 - Active Cat displays a clear outline + instruction text
-- Action prompts show the required presses (e.g., "Press P ×3", "Press N ×4")
+- Action prompts show the required key presses (e.g., "Press F ×3")
 - While Active:
--  - `P` = Play (after clicking a toy)
--  - `T` = Pet (on the cat itself)
--  - `N` = No No (only if disaster is active)
--  - Clicking Food Bowl then pressing `F` serves Feed
--  - Clicking Water Bowl then pressing `W` serves Water
+-  - Arrow keys = move the cat
+-  - `F` = Feed (at food bowl)
+-  - `W` = Water (at water bowl)
+-  - `P` = Play (at toy)
+-  - `T` = Pet (anywhere)
+-  - `N` = No No (only if disaster is active, works on any cat)
 - If no Active Cat, keyboard input does nothing and a hint appears ("Select a cat")
 - Completing an action clears Active Cat so the player can select another
 
@@ -89,7 +94,7 @@ Each cat card shows:
         😿
        /|\
     "I want food!"
-    ⏱️ 12s
+    ⏱️ 9s
 ```
 
 **Shows:**
@@ -159,6 +164,7 @@ Each cat card shows:
 - Ends when ALL cats complete their planned actions
 - Auto-advances to next round
 - Brief pause with "Round X" announcement between rounds
+- Action timers in single-cat mode randomize between 5–15 seconds
 
 ### Pacing & Concurrency Rules
 - Only one high-APM action can be active at a time (food bowl, water bowl, "No No")
@@ -192,11 +198,11 @@ Each cat card shows:
 
 | Action Type | Requirement | Points | Failure Consequence |
 |-------------|-------------|--------|---------------------|
-| Food | Click bowl, then press `F` rapidly | +10 | -6 points, cat waits |
-| Water | Click bowl, then press `W` rapidly | +7 | -4 points, cat waits |
-| Play | Click toy, then press `P` rapidly | +12 | -4 points |
-| Pet | Press `T` on Active Cat | +6 | -3 points |
-| No No | Press `N` rapidly (3-5) | 0 (prevents) | Warning on first miss, break on second within 15s |
+| Food | Press `F` rapidly | +10 | -6 points, cat waits |
+| Water | Press `W` rapidly | +7 | -4 points, cat waits |
+| Play | Press `P` rapidly | +12 | -4 points |
+| Pet | Press `T` | +6 | -3 points |
+| No No | Press `N` rapidly (3-5) | 0 (prevents) | Object breaks and points are deducted on failure |
 
 **Failure Grace (Disasters):**
 - First miss triggers a warning only: -5 points, object does NOT fall
@@ -206,8 +212,8 @@ Each cat card shows:
 
 **Round 2:**
 - 1 cat (Mochi)
-- Action: Hunger (click bowl, press `F` ×4)
-- Timer: 15 seconds
+- Action: Hunger (press `F` ×4)
+- Timer: 8 seconds
 - User completes input → +10 points → Round complete
 
 **Round 9:**
@@ -215,7 +221,7 @@ Each cat card shows:
 - Mochi: Hunger + Disaster prep (vase)
 - Luna: Play
 - Oliver: Water
-- Timers: 10-16 seconds each
+- Timers: 5-15 seconds each
 - User must prioritize which to handle first
 
 ---
@@ -262,9 +268,8 @@ Each cat card shows:
 **When Cat Approaches Fragile Object:**
 1. "!" appears above cat
 2. Thought bubble shows intent ("😼 Break things!")
-3. Object starts subtly shaking
-4. Countdown appears (6-8 seconds to respond)
-5. If required `N` presses incomplete → disaster
+3. Object starts subtly shaking as the cat approaches
+4. If the cat reaches the object before enough `N` presses → disaster
 
 **After Disaster:**
 - Object falls (visual: rotated/faded)
@@ -401,7 +406,7 @@ Recent Events:
 ### Phase 1: Core Mechanics (Current)
 - [ ] Right panel with cat cards
 - [ ] Single primary action button per cat
-- [ ] Food/water bowl clicking on game board
+- [ ] Food/water actions via movement + action keys
 - [ ] Cat movement toward targets
 - [ ] Basic timer system
 - [ ] Score display and logging
@@ -425,11 +430,11 @@ Recent Events:
 
 | Action | Location | How to Complete |
 |--------|----------|-----------------|
-| Feed cat | Game board (bowl) | Click bowl, then press `F` rapidly × required |
-| Fill water | Game board (bowl) | Click bowl, then press `W` rapidly × required |
-| Play with cat | Active cat | Press `P` |
-| Pet cat | Active cat | Press `T` |
-| Prevent disaster | Active cat | Press `N` rapidly × required |
+| Feed cat | Food bowl | Move with arrows, then press `F` rapidly × required |
+| Fill water | Water bowl | Move with arrows, then press `W` rapidly × required |
+| Play with cat | Toy area | Move with arrows, then press `P` rapidly × required |
+| Pet cat | Anywhere | Press `T` |
+| Prevent disaster | Keyboard (any cat) | Press `N` rapidly × required |
 | See cat state | Hover on cat | Thought bubble appears |
 | Pause game | Top right button | Click "⏸️ PAUSE" |
 | View score | Top center | Always visible |

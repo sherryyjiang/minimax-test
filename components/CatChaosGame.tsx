@@ -73,18 +73,17 @@ function getRandomInt(min: number, max: number) {
 // Constants
 const GAME_WIDTH = 700;
 const GAME_HEIGHT = 550;
-const CAT_SPEED = 1.0;
 const PLAYER_MOVE_SPEED = 4; // Arrow key movement speed
 const PROXIMITY_RADIUS = 60; // How close cat must be to interact
-const NEED_INCREMENT = 0.4;
 const DISASTER_THRESHOLD = 65;
 const SCOLD_DURATION = 2000;
 const ACTION_WINDOW_MS = 8000;
 const DISASTER_MOVE_SPEED = 1.5; // Speed when cat moves autonomously to destroy
 
 // Round timer settings - creates urgency!
-const ROUND_TIMER_BASE_SECONDS = 15; // Base time for a single action (reduced for more challenge)
-const ROUND_TIMER_PER_ACTION_SECONDS = 8; // Additional time per extra action (reduced for more challenge)
+const ROUND_TIMER_MIN_SECONDS = 5;
+const ROUND_TIMER_MAX_SECONDS = 15;
+const ROUND_TIMER_PER_ACTION_SECONDS = 2;
 const TIMER_SPEED_MULTIPLIERS: Record<string, number> = {
   intro: 1.0,    // Rounds 1-3
   early: 0.95,   // Rounds 4-8
@@ -104,6 +103,13 @@ const ACTION_PRESS_COUNTS = {
   pet: 1,
   noNoMin: 3,
   noNoMax: 5,
+};
+const DISASTER_PENALTIES: Record<string, number> = {
+  vase: 15,
+  lamp: 12,
+  mug: 10,
+  plant: 8,
+  food_counter: 12,
 };
 
 // Breakable objects for disaster mode
@@ -234,15 +240,13 @@ const getInstructionText = (
   // If action window is active, show press instructions
   if (actionWindow) {
     const remaining = actionWindow.requiredPresses - actionWindow.currentPresses;
-    const keyMap = { food: 'F', water: 'W', play: 'P', pet: 'T', no_no: 'N' };
+    const keyMap = { food: 'F', water: 'W', play: 'P', pet: 'T', no_no: 'N' } as const;
     const key = keyMap[actionWindow.type];
     return {
       line1: `${urgencyPrefix}Press ${key} rapidly!`,
       line2: `${remaining} more ${remaining === 1 ? 'press' : 'presses'} needed`
     };
   }
-  
-  const needName = currentAction.type.charAt(0).toUpperCase() + currentAction.type.slice(1);
   
   // Cat is active, give specific instructions based on need
   switch (currentAction.type) {
@@ -298,7 +302,6 @@ export default function CatChaosGame() {
   const [popups, setPopups] = useState<Popup[]>([]);
   const [disasterMode, setDisasterMode] = useState(false);
   const [showLabels, setShowLabels] = useState(false); // Toggle for educational labels
-  const [activeCatId, setActiveCatId] = useState<string | null>(null);
   const [actionWindow, setActionWindow] = useState<ActionWindow | null>(null);
   // Round system state
   const [currentRound, setCurrentRound] = useState(1);
@@ -389,13 +392,17 @@ export default function CatChaosGame() {
     
     const speedMultiplier = TIMER_SPEED_MULTIPLIERS[stage];
     
-    // Calculate base time: base + additional per extra action
-    const baseTime = ROUND_TIMER_BASE_SECONDS + (Math.max(0, actionCount - 1) * ROUND_TIMER_PER_ACTION_SECONDS);
-    
+    // Calculate base time: random range + small boost per extra action
+    const baseTime = getRandomInt(ROUND_TIMER_MIN_SECONDS, ROUND_TIMER_MAX_SECONDS)
+      + (Math.max(0, actionCount - 1) * ROUND_TIMER_PER_ACTION_SECONDS);
+
     // Apply speed multiplier (lower = faster = harder)
     const finalTime = Math.round(baseTime * speedMultiplier);
-    
-    return finalTime * 1000; // Return in milliseconds
+
+    // Clamp to requested range
+    const clampedTime = Math.max(ROUND_TIMER_MIN_SECONDS, Math.min(ROUND_TIMER_MAX_SECONDS, finalTime));
+
+    return clampedTime * 1000; // Return in milliseconds
   }, []);
 
   // Generate actions for a round based on round number
@@ -464,12 +471,16 @@ export default function CatChaosGame() {
         } : null,
         state: 'idle' as const,
       })));
+
+      if (targetZone) {
+        setZones(prevZ => prevZ.map(z => z.id === targetZone.id ? { ...z, isWobbling: true, isFallen: false, lastNoNoFailAt: undefined } : z));
+      }
       
       // Start disaster mode after banner
       setTimeout(() => {
         setShowRoundBanner(false);
         setRoundPaused(false);
-        setRoundTimerActive(true);
+        setRoundTimerActive(false);
         setIsDisasterMode(true);
       }, 2000);
     } else {
@@ -540,17 +551,6 @@ export default function CatChaosGame() {
     }
   }, [showRoundBanner, currentRound, cats, addPopup, startNewRound, roundTimerActive, roundTimerTotal, roundTimeRemaining]);
 
-  // Get most urgent need
-  const getMostUrgentNeed = useCallback((cat: Cat): { type: 'hunger' | 'water' | 'play' | 'attention'; value: number; zone?: Zone } => {
-    const needs = [
-      { type: 'hunger' as const, value: cat.needs.hunger, zone: zones.find(z => z.type === 'food_bowl') },
-      { type: 'water' as const, value: cat.needs.water, zone: zones.find(z => z.type === 'water_bowl') },
-      { type: 'play' as const, value: cat.needs.play, zone: zones.find(z => z.type === 'toy') },
-      { type: 'attention' as const, value: cat.needs.attention },
-    ];
-    return needs.sort((a, b) => b.value - a.value)[0];
-  }, [zones]);
-
   // Get need color based on level
   const getNeedFillColor = (value: number): string => {
     if (value < 30) return NEED_COLORS.hunger.low;
@@ -558,21 +558,6 @@ export default function CatChaosGame() {
     if (value < DISASTER_THRESHOLD) return NEED_COLORS.hunger.high;
     return NEED_COLORS.hunger.critical;
   };
-
-  const getActionPrompt = useCallback((catId: string) => {
-    if (actionWindow && actionWindow.catId === catId) {
-      const remaining = Math.max(0, actionWindow.requiredPresses - actionWindow.currentPresses);
-      if (actionWindow.type === 'food') return `Press F ×${remaining}`;
-      if (actionWindow.type === 'water') return `Press W ×${remaining}`;
-      if (actionWindow.type === 'play') return `Press P ×${remaining}`;
-      if (actionWindow.type === 'pet') return `Press T ×${remaining}`;
-      if (actionWindow.type === 'no_no') return `Press N ×${remaining}`;
-    }
-    if (activeCatId === catId) {
-      return 'Select an action';
-    }
-    return '';
-  }, [actionWindow, activeCatId]);
 
   const startActionWindow = useCallback((type: ActionWindow['type'], catId: string, zoneId?: string, initialPresses = 0) => {
     if (actionWindow) return;
@@ -587,6 +572,7 @@ export default function CatChaosGame() {
       setZones(prev => prev.map(z => z.id === 'water_bowl' ? { ...z, fillLevel: 0 } : z));
     }
     
+    setKeysPressed(new Set());
     setActionWindow({
       type,
       catId,
@@ -595,11 +581,10 @@ export default function CatChaosGame() {
       expiresAt: Date.now() + ACTION_WINDOW_MS,
       zoneId,
     });
-  }, [actionWindow]);
+  }, [actionWindow, setKeysPressed]);
 
   const clearActionWindow = useCallback(() => {
     setActionWindow(null);
-    setActiveCatId(null);
   }, []);
 
   // Fulfill cat need
@@ -671,8 +656,7 @@ export default function CatChaosGame() {
       setZones(prev => prev.map(z => z.id === window.zoneId ? { ...z, isWobbling: false, lastNoNoFailAt: undefined } : z));
       
       const cat = cats.find(cat => cat.id === window.catId);
-      addPopup(cat?.position.x ?? 0, cat?.position.y ?? 0, 'NO NO! ✋ +10');
-      setScore(s => s + 10);
+      addPopup(cat?.position.x ?? 0, cat?.position.y ?? 0, 'NO NO! ✋');
       
       // If in disaster mode, complete the disaster action
       if (isDisasterMode) {
@@ -708,37 +692,22 @@ export default function CatChaosGame() {
       addPopup(cats.find(cat => cat.id === window.catId)?.position.x ?? 0, cats.find(cat => cat.id === window.catId)?.position.y ?? 0, '-3');
     }
     if (window.type === 'no_no' && window.zoneId) {
-      const now = Date.now();
-      let didBreak = false;
-      setZones(prev => prev.map(z => {
-        if (z.id !== window.zoneId) return z;
-        if (z.lastNoNoFailAt && now - z.lastNoNoFailAt <= 15000) {
-          didBreak = true;
-          return { ...z, isWobbling: false, isFallen: true, lastNoNoFailAt: undefined };
-        }
-        return { ...z, lastNoNoFailAt: now };
-      }));
-      if (didBreak) {
-        setScore(s => s - 15);
-        addPopup(
-          cats.find(cat => cat.id === window.catId)?.position.x ?? 0,
-          cats.find(cat => cat.id === window.catId)?.position.y ?? 0,
-          '-15 💔'
-        );
-      } else {
-        setScore(s => s - 5);
-        addPopup(
-          cats.find(cat => cat.id === window.catId)?.position.x ?? 0,
-          cats.find(cat => cat.id === window.catId)?.position.y ?? 0,
-          '-5 ⚠️'
-        );
-      }
+      const zone = zones.find(z => z.id === window.zoneId);
+      const penalty = DISASTER_PENALTIES[zone?.type ?? 'vase'] ?? 15;
+      setZones(prev => prev.map(z => z.id === window.zoneId ? { ...z, isWobbling: false, isFallen: true, lastNoNoFailAt: undefined } : z));
+      setScore(s => s - penalty);
+      addPopup(
+        cats.find(cat => cat.id === window.catId)?.position.x ?? 0,
+        cats.find(cat => cat.id === window.catId)?.position.y ?? 0,
+        `-${penalty} 💔`
+      );
     }
     clearActionWindow();
-  }, [addPopup, cats, clearActionWindow]);
+  }, [addPopup, cats, clearActionWindow, zones]);
 
   useEffect(() => {
     if (!actionWindow) return;
+    if (actionWindow.type === 'no_no') return;
     const interval = setInterval(() => {
       if (Date.now() > actionWindow.expiresAt) {
         applyActionFailure(actionWindow);
@@ -753,9 +722,9 @@ export default function CatChaosGame() {
     
     const handleKeyDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
-      
-      // Arrow key movement (only when not in disaster mode)
-      if (!isDisasterMode && ['arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+
+      // Arrow key movement (only when not in disaster mode or action window)
+      if (!isDisasterMode && !actionWindow && ['arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
         event.preventDefault();
         setKeysPressed(prev => new Set(prev).add(key));
         return;
@@ -779,7 +748,7 @@ export default function CatChaosGame() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [gameStarted, gameOver, roundPaused, isDisasterMode]);
+  }, [gameStarted, gameOver, roundPaused, isDisasterMode, actionWindow]);
 
   // Action key handler
   useEffect(() => {
@@ -792,7 +761,7 @@ export default function CatChaosGame() {
       
       const currentAction = roundActions.find(a => !a.completed);
       
-      // Handle action window (mashing keys to complete)
+      // Handle action window (action keys for actions, N for no-no)
       if (actionWindow) {
         const isCorrectKey =
           (actionWindow.type === 'food' && key === 'f') ||
@@ -801,14 +770,14 @@ export default function CatChaosGame() {
           (actionWindow.type === 'pet' && key === 't') ||
           (actionWindow.type === 'no_no' && key === 'n');
         if (!isCorrectKey) return;
-        
+
         // Visual feedback for bowl filling
         if (actionWindow.type === 'food') {
           const foodBowl = zones.find(z => z.id === 'food_bowl');
           if (foodBowl) {
             addPopup(foodBowl.position.x + 30, foodBowl.position.y - 10, '+🍖');
-            setZones(prev => prev.map(z => 
-              z.id === 'food_bowl' 
+            setZones(prev => prev.map(z =>
+              z.id === 'food_bowl'
                 ? { ...z, fillLevel: Math.min(100, (z.fillLevel || 0) + (100 / ACTION_PRESS_COUNTS.food)) }
                 : z
             ));
@@ -817,14 +786,14 @@ export default function CatChaosGame() {
           const waterBowl = zones.find(z => z.id === 'water_bowl');
           if (waterBowl) {
             addPopup(waterBowl.position.x + 30, waterBowl.position.y - 10, '+💧');
-            setZones(prev => prev.map(z => 
-              z.id === 'water_bowl' 
+            setZones(prev => prev.map(z =>
+              z.id === 'water_bowl'
                 ? { ...z, fillLevel: Math.min(100, (z.fillLevel || 0) + (100 / ACTION_PRESS_COUNTS.water)) }
                 : z
             ));
           }
         }
-        
+
         setActionWindow(prev => {
           if (!prev) return prev;
           const nextCount = prev.currentPresses + 1;
@@ -847,7 +816,7 @@ export default function CatChaosGame() {
         }
         return;
       }
-      
+
       // Check if trying to do wrong action
       const actionTypeForKey = {
         'f': 'hunger',
@@ -855,16 +824,16 @@ export default function CatChaosGame() {
         'p': 'play',
         't': 'attention',
       } as const;
-      
+
       if (key in actionTypeForKey) {
         const attemptedAction = actionTypeForKey[key as keyof typeof actionTypeForKey];
-        
+
         // Check if this is the correct action for the current round
         if (currentAction?.type !== attemptedAction) {
           showWrongAction(cat.position.x, cat.position.y);
           return;
         }
-        
+
         // Check proximity for non-attention actions
         if (attemptedAction !== 'attention') {
           const isNear = isCatNearCurrentTarget(cat, currentAction);
@@ -873,7 +842,7 @@ export default function CatChaosGame() {
             return;
           }
         }
-        
+
         // Start the action
         if (key === 'f') {
           startActionWindow('food', cat.id, 'food_bowl');
@@ -891,12 +860,21 @@ export default function CatChaosGame() {
             expiresAt: Date.now() + ACTION_WINDOW_MS,
           });
         }
+        return;
       }
+
+      if (key === 'n') {
+        showWrongAction(cat.position.x, cat.position.y);
+        return;
+      }
+
+      return;
     };
     
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cats, actionWindow, applyActionSuccess, gameOver, gameStarted, roundPaused, startActionWindow, zones, roundActions, isDisasterMode, isCatNearCurrentTarget, showWrongAction, addPopup]);
+  }, [cats, actionWindow, applyActionSuccess, gameOver, gameStarted, roundPaused, startActionWindow, zones, roundActions, isDisasterMode, isCatNearCurrentTarget, addPopup, showWrongAction]);
+
 
   // Start game
   const startGame = useCallback(() => {
@@ -935,7 +913,6 @@ export default function CatChaosGame() {
     setGameStarted(true);
     setPopups([]);
     setDisasterMode(false);
-    setActiveCatId('cat-0'); // Auto-select the cat in simplified mode
     setActionWindow(null);
     setCurrentRound(1);
     setRoundActions(firstRoundActions);
@@ -992,6 +969,9 @@ export default function CatChaosGame() {
     const gameLoop = () => {
       setCats(prevCats => {
         let disasterOccurred = false;
+        let disasterFailed = false;
+        let failedZoneId: string | null = null;
+        let failurePopupPosition = { x: prevCats[0]?.position.x ?? 350, y: prevCats[0]?.position.y ?? 300 };
         const currentAction = roundActions.find(a => !a.completed);
 
         const updatedCats: Cat[] = prevCats.map(cat => {
@@ -1019,20 +999,21 @@ export default function CatChaosGame() {
                 y: cat.position.y + (dy / dist) * DISASTER_MOVE_SPEED,
               };
             } else {
-              // Cat reached the target - start wobbling the object
-              const targetZone = zones.find(z => z.id === currentAction.targetZoneId);
-              if (targetZone && !targetZone.isWobbling && !targetZone.isFallen) {
-                setZones(prevZ => prevZ.map(z => {
-                  if (z.id === currentAction.targetZoneId) {
-                    return { ...z, isWobbling: true };
-                  }
-                  return z;
-                }));
+              // Cat reached the target before enough N presses
+              const noNoIncomplete = !actionWindow
+                || actionWindow.type !== 'no_no'
+                || actionWindow.currentPresses < actionWindow.requiredPresses;
+
+              if (noNoIncomplete && currentAction.targetZoneId) {
+                disasterFailed = true;
+                failedZoneId = currentAction.targetZoneId;
+                failurePopupPosition = { x: cat.position.x, y: cat.position.y };
+                newTarget = null;
               }
             }
           } 
           // PLAYER CONTROL MODE: Move cat with arrow keys
-          else if (!isDisasterMode) {
+          else if (!isDisasterMode && !actionWindow) {
             let moveX = 0;
             let moveY = 0;
 
@@ -1065,36 +1046,23 @@ export default function CatChaosGame() {
           } as Cat;
         });
 
-        // Check for wobbling objects that might fall
-        zones.forEach(zone => {
-          if (zone.isWobbling && !zone.isFallen) {
-            // In disaster mode, object falls faster if player doesn't stop it
-            const fallChance = isDisasterMode ? 0.008 : 0.004;
-            if (Math.random() < fallChance) {
-              setZones(prevZ => prevZ.map(z => {
-                if (z.id === zone.id) {
-                  disasterOccurred = true;
-                  return { ...z, isWobbling: false, isFallen: true };
-                }
-                return z;
-              }));
-              
-              // Fail the disaster action
-              if (isDisasterMode && currentAction?.type === 'disaster') {
-                setScore(s => s - 15);
-                addPopup(prevCats[0]?.position.x || 350, prevCats[0]?.position.y || 300, '-15 💔');
-                
-                // Mark disaster as "completed" (failed) and move to next round
-                setRoundActions(prev => {
-                  const updated = prev.map(a => a.type === 'disaster' ? { ...a, completed: true } : a);
-                  setTimeout(() => checkRoundComplete(updated), 100);
-                  return updated;
-                });
-                setIsDisasterMode(false);
-              }
-            }
-          }
-        });
+        if (disasterFailed && failedZoneId) {
+          const targetZone = zones.find(z => z.id === failedZoneId);
+          const penalty = DISASTER_PENALTIES[targetZone?.type ?? 'vase'] ?? 15;
+          setZones(prevZ => prevZ.map(z => z.id === failedZoneId ? { ...z, isWobbling: false, isFallen: true, lastNoNoFailAt: undefined } : z));
+          setScore(s => s - penalty);
+          addPopup(failurePopupPosition.x, failurePopupPosition.y, `-${penalty} 💔`);
+
+          // Mark disaster as completed (failed) and move to next round
+          setRoundActions(prev => {
+            const updated = prev.map(a => a.type === 'disaster' ? { ...a, completed: true } : a);
+            setTimeout(() => checkRoundComplete(updated), 100);
+            return updated;
+          });
+          setIsDisasterMode(false);
+          setActionWindow(null);
+          disasterOccurred = true;
+        }
 
         if (disasterOccurred) {
           setDisasterMode(true);
@@ -1117,7 +1085,7 @@ export default function CatChaosGame() {
     return () => {
       if (gameLoopRef.current) cancelAnimationFrame(gameLoopRef.current);
     };
-  }, [gameStarted, gameOver, roundPaused, score, zones, keysPressed, isDisasterMode, roundActions, addPopup, checkRoundComplete]);
+  }, [gameStarted, gameOver, roundPaused, score, zones, keysPressed, isDisasterMode, actionWindow, roundActions, addPopup, checkRoundComplete]);
 
   // Round timer countdown effect
   // IMPORTANT: Do NOT include cats in dependencies - it changes every frame and would reset the interval
@@ -1214,7 +1182,7 @@ export default function CatChaosGame() {
           <div className="text-7xl mb-2">🏠🐱</div>
           <p className="text-stone-200 text-center max-w-md text-lg">
             Guide your cat around the room to fulfill their needs!
-            Move to items and press keys to interact.
+            Move to items and press the action keys to interact.
           </p>
           
           {/* Timer info */}
@@ -1230,9 +1198,9 @@ export default function CatChaosGame() {
           
           <div className="grid grid-cols-2 gap-4 text-stone-300 text-sm">
             <div className="flex items-center gap-2"><span className="text-2xl">⬆️⬇️⬅️➡️</span> Arrow keys to move</div>
-            <div className="flex items-center gap-2"><span className="text-2xl">🍖</span> At food bowl → Press F</div>
-            <div className="flex items-center gap-2"><span className="text-2xl">💧</span> At water bowl → Press W</div>
-            <div className="flex items-center gap-2"><span className="text-2xl">🧶</span> At toy → Press P</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">🍖</span> At food bowl → Press F rapidly</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">💧</span> At water bowl → Press W rapidly</div>
+            <div className="flex items-center gap-2"><span className="text-2xl">🧶</span> At toy → Press P rapidly</div>
             <div className="flex items-center gap-2"><span className="text-2xl">💕</span> Pet anywhere → Press T</div>
             <div className="flex items-center gap-2"><span className="text-2xl">✋</span> Stop mischief → Press N</div>
           </div>
@@ -1363,7 +1331,7 @@ export default function CatChaosGame() {
               {/* ==================== WALLS LAYER ==================== */}
 
               {/* Back wall */}
-              <BackWall width={GAME_WIDTH} height={GAME_HEIGHT} />
+              <BackWall width={GAME_WIDTH} />
 
               {/* Side walls with perspective */}
               <SideWalls width={GAME_WIDTH} height={GAME_HEIGHT} />
@@ -1596,13 +1564,6 @@ export default function CatChaosGame() {
               {/* ==================== CATS LAYER ==================== */}
 
               {cats.map(cat => {
-                const urgent = getMostUrgentNeed({ ...cat, needs: {
-                  hunger: cat.needs.hunger,
-                  water: cat.needs.water,
-                  play: cat.needs.play,
-                  attention: cat.needs.attention,
-                }});
-
                 return (
                   <g
                     key={cat.id}
