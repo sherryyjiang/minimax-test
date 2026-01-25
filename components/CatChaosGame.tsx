@@ -167,6 +167,73 @@ const NEED_ICONS = {
   attention: '💕',
 };
 
+// Get instruction text based on current game state
+const getInstructionText = (
+  activeCatId: string | null,
+  actionWindow: ActionWindow | null,
+  roundActions: RoundAction[],
+  cats: Cat[]
+): { line1: string; line2: string } => {
+  // Find current uncompleted action
+  const currentAction = roundActions.find(a => !a.completed);
+  const cat = cats[0]; // Single cat mode
+  
+  if (!cat) {
+    return { line1: 'Welcome to Cat Chaos!', line2: 'Press Start to begin' };
+  }
+  
+  if (!currentAction) {
+    return { line1: 'Round Complete!', line2: 'Great job!' };
+  }
+  
+  const needName = currentAction.type.charAt(0).toUpperCase() + currentAction.type.slice(1);
+  
+  // If no cat is active, tell player to click the cat first
+  if (!activeCatId) {
+    return { 
+      line1: `${cat.name} needs ${needName}!`,
+      line2: 'Click on the cat to select it'
+    };
+  }
+  
+  // If action window is active, show press instructions
+  if (actionWindow) {
+    const remaining = actionWindow.requiredPresses - actionWindow.currentPresses;
+    const keyMap = { food: 'F', water: 'W', play: 'P', pet: 'T', no_no: 'N' };
+    const key = keyMap[actionWindow.type];
+    return {
+      line1: `Press ${key} to fill!`,
+      line2: `${remaining} more ${remaining === 1 ? 'press' : 'presses'} needed`
+    };
+  }
+  
+  // Cat is active, give specific instructions based on need
+  switch (currentAction.type) {
+    case 'hunger':
+      return {
+        line1: `${cat.name} is hungry!`,
+        line2: 'Click the FOOD BOWL, then press F'
+      };
+    case 'water':
+      return {
+        line1: `${cat.name} is thirsty!`,
+        line2: 'Click the WATER BOWL, then press W'
+      };
+    case 'play':
+      return {
+        line1: `${cat.name} wants to play!`,
+        line2: 'Click a TOY, then press P'
+      };
+    case 'attention':
+      return {
+        line1: `${cat.name} wants attention!`,
+        line2: 'Press T to pet the cat'
+      };
+    default:
+      return { line1: 'Keep your cat happy!', line2: '' };
+  }
+};
+
 export default function CatChaosGame() {
   const [cats, setCats] = useState<Cat[]>([]);
   const [zones, setZones] = useState<Zone[]>(ROOM_ZONES);
@@ -301,6 +368,14 @@ export default function CatChaosGame() {
     const requiredPresses = type === 'no_no'
       ? getRandomInt(ACTION_PRESS_COUNTS.noNoMin, ACTION_PRESS_COUNTS.noNoMax)
       : ACTION_PRESS_COUNTS[type];
+    
+    // Reset bowl fill level to 0 when starting to fill
+    if (type === 'food') {
+      setZones(prev => prev.map(z => z.id === 'food_bowl' ? { ...z, fillLevel: 0, isEmpty: true } : z));
+    } else if (type === 'water') {
+      setZones(prev => prev.map(z => z.id === 'water_bowl' ? { ...z, fillLevel: 0 } : z));
+    }
+    
     setActionWindow({
       type,
       catId,
@@ -461,6 +536,32 @@ export default function CatChaosGame() {
           (actionWindow.type === 'pet' && key === 't') ||
           (actionWindow.type === 'no_no' && key === 'n');
         if (!isCorrectKey) return;
+        
+        // Visual feedback for bowl filling
+        if (actionWindow.type === 'food') {
+          const foodBowl = zones.find(z => z.id === 'food_bowl');
+          if (foodBowl) {
+            addPopup(foodBowl.position.x + 30, foodBowl.position.y - 10, '+🍖');
+            // Increment fill level visually
+            setZones(prev => prev.map(z => 
+              z.id === 'food_bowl' 
+                ? { ...z, fillLevel: Math.min(100, (z.fillLevel || 0) + (100 / ACTION_PRESS_COUNTS.food)) }
+                : z
+            ));
+          }
+        } else if (actionWindow.type === 'water') {
+          const waterBowl = zones.find(z => z.id === 'water_bowl');
+          if (waterBowl) {
+            addPopup(waterBowl.position.x + 30, waterBowl.position.y - 10, '+💧');
+            // Increment fill level visually
+            setZones(prev => prev.map(z => 
+              z.id === 'water_bowl' 
+                ? { ...z, fillLevel: Math.min(100, (z.fillLevel || 0) + (100 / ACTION_PRESS_COUNTS.water)) }
+                : z
+            ));
+          }
+        }
+        
         setActionWindow(prev => {
           if (!prev) return prev;
           const nextCount = prev.currentPresses + 1;
@@ -524,7 +625,7 @@ export default function CatChaosGame() {
     setGameStarted(true);
     setPopups([]);
     setDisasterMode(false);
-    setActiveCatId(null);
+    setActiveCatId('cat-0'); // Auto-select the cat in simplified mode
     setActionWindow(null);
     setCurrentRound(1);
     setRoundActions(firstRoundActions);
@@ -819,58 +920,7 @@ export default function CatChaosGame() {
             </button>
           </div>
 
-          <div className="flex gap-6 items-start">
-            {/* Right Panel */}
-            <div className="w-72 bg-stone-800/90 border border-stone-700 rounded-xl p-4 shadow-xl">
-              <h2 className="text-stone-200 font-semibold mb-3">Cats</h2>
-              <div className="space-y-3">
-                {[...cats]
-                  .sort((a, b) => getMostUrgentNeed(b).value - getMostUrgentNeed(a).value)
-                  .map(cat => {
-                    const urgent = getMostUrgentNeed(cat);
-                    const isCritical = urgent.value >= DISASTER_THRESHOLD;
-                    const isActive = activeCatId === cat.id;
-                    const actionPrompt = getActionPrompt(cat.id);
-                    return (
-                      <button
-                        key={cat.id}
-                        onClick={() => {
-                          if (actionWindow) return;
-                          setActiveCatId(cat.id);
-                        }}
-                        className={`w-full text-left bg-stone-900/70 border rounded-lg p-3 transition-colors ${
-                          isActive ? 'border-amber-400/80 ring-2 ring-amber-400/30' : 'border-stone-700 hover:border-stone-500'
-                        }`}
-                        type="button"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="text-stone-200 font-medium flex items-center gap-2">
-                            <span>{cat.emoji}</span>
-                            <span>{cat.name}</span>
-                          </div>
-                          {isCritical && (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-red-500 text-white font-semibold">URGENT</span>
-                          )}
-                        </div>
-                        <div className="text-stone-400 text-xs mt-2 flex items-center gap-2">
-                          <span>{NEED_ICONS[urgent.type]}</span>
-                          <span className="uppercase">{urgent.type}</span>
-                        </div>
-                        <div className="mt-2 h-2 rounded-full bg-stone-700 overflow-hidden">
-                          <div
-                            className="h-full rounded-full"
-                            style={{ width: `${Math.min(100, Math.round(urgent.value))}%`, backgroundColor: getNeedFillColor(urgent.value) }}
-                          />
-                        </div>
-                        {actionPrompt && (
-                          <div className="mt-2 text-xs text-amber-200">{actionPrompt}</div>
-                        )}
-                      </button>
-                    );
-                  })}
-              </div>
-            </div>
-
+          <div className="flex flex-col items-center">
             {/* Game Room */}
             <div
               className={`relative rounded-xl shadow-2xl overflow-hidden border-4 border-stone-600 ${disasterMode ? 'animate-shake' : ''}`}
@@ -972,53 +1022,112 @@ export default function CatChaosGame() {
 
               {/* ==================== INTERACTIVE ZONES ==================== */}
 
-              {/* Food & Water Bowls */}
-              <g
-                filter="url(#furnitureShadow)"
-                onClick={() => {
-                  if (!activeCatId || actionWindow) return;
-                  startActionWindow('food', activeCatId, 'food_bowl');
-                }}
-                className="cursor-pointer"
-              >
-                <FoodBowl x={50} y={400} fillLevel={zones.find(z => z.id === 'food_bowl')?.fillLevel || 0} isEmpty={zones.find(z => z.id === 'food_bowl')?.isEmpty ?? true} />
-                <ElementLabel x={80} y={460} label="Food Bowl" visible={showLabels} />
-              </g>
-              <g
-                filter="url(#furnitureShadow)"
-                onClick={() => {
-                  if (!activeCatId || actionWindow) return;
-                  startActionWindow('water', activeCatId, 'water_bowl');
-                }}
-                className="cursor-pointer"
-              >
-                <WaterBowl x={130} y={400} fillLevel={zones.find(z => z.id === 'water_bowl')?.fillLevel || 100} />
-                <ElementLabel x={160} y={460} label="Water Bowl" visible={showLabels} />
-              </g>
+              {(() => {
+                const currentAction = roundActions.find(a => !a.completed);
+                const shouldHighlightFood = activeCatId && !actionWindow && currentAction?.type === 'hunger';
+                const shouldHighlightWater = activeCatId && !actionWindow && currentAction?.type === 'water';
+                const shouldHighlightToys = activeCatId && !actionWindow && currentAction?.type === 'play';
+                
+                return (
+                  <>
+                    {/* Food & Water Bowls */}
+                    <g
+                      filter="url(#furnitureShadow)"
+                      onClick={() => {
+                        if (!activeCatId || actionWindow) return;
+                        startActionWindow('food', activeCatId, 'food_bowl');
+                      }}
+                      className="cursor-pointer"
+                    >
+                      {/* Highlight ring for food bowl */}
+                      {shouldHighlightFood && (
+                        <circle cx={77} cy={420} r="40" fill="none" stroke="#fbbf24" strokeWidth="4" opacity="0.8">
+                          <animate attributeName="r" values="35;45;35" dur="1s" repeatCount="indefinite" />
+                          <animate attributeName="opacity" values="0.9;0.4;0.9" dur="1s" repeatCount="indefinite" />
+                        </circle>
+                      )}
+                      <FoodBowl x={50} y={400} fillLevel={zones.find(z => z.id === 'food_bowl')?.fillLevel || 0} isEmpty={zones.find(z => z.id === 'food_bowl')?.isEmpty ?? true} />
+                      <ElementLabel x={80} y={460} label="Food Bowl" visible={showLabels} />
+                      {shouldHighlightFood && (
+                        <text x={77} y={380} textAnchor="middle" fontSize="12" fill="#fbbf24" fontWeight="bold">
+                          CLICK HERE
+                        </text>
+                      )}
+                    </g>
+                    <g
+                      filter="url(#furnitureShadow)"
+                      onClick={() => {
+                        if (!activeCatId || actionWindow) return;
+                        startActionWindow('water', activeCatId, 'water_bowl');
+                      }}
+                      className="cursor-pointer"
+                    >
+                      {/* Highlight ring for water bowl */}
+                      {shouldHighlightWater && (
+                        <circle cx={157} cy={420} r="40" fill="none" stroke="#3b82f6" strokeWidth="4" opacity="0.8">
+                          <animate attributeName="r" values="35;45;35" dur="1s" repeatCount="indefinite" />
+                          <animate attributeName="opacity" values="0.9;0.4;0.9" dur="1s" repeatCount="indefinite" />
+                        </circle>
+                      )}
+                      <WaterBowl x={130} y={400} fillLevel={zones.find(z => z.id === 'water_bowl')?.fillLevel || 100} />
+                      <ElementLabel x={160} y={460} label="Water Bowl" visible={showLabels} />
+                      {shouldHighlightWater && (
+                        <text x={157} y={380} textAnchor="middle" fontSize="12" fill="#3b82f6" fontWeight="bold">
+                          CLICK HERE
+                        </text>
+                      )}
+                    </g>
 
-              {/* Toys */}
-              <g style={{ opacity: 0.9 }}>
-                <g
-                  onClick={() => {
-                    if (!activeCatId || actionWindow) return;
-                    startActionWindow('play', activeCatId, 'toy1');
-                  }}
-                  className="cursor-pointer"
-                >
-                  <ToyBall x={350} y={360} />
-                </g>
-                <ElementLabel x={370} y={405} label="Ball Toy" visible={showLabels} />
-                <g
-                  onClick={() => {
-                    if (!activeCatId || actionWindow) return;
-                    startActionWindow('play', activeCatId, 'toy2');
-                  }}
-                  className="cursor-pointer"
-                >
-                  <YarnBall x={460} y={425} />
-                </g>
-                <ElementLabel x={485} y={470} label="Yarn Ball" visible={showLabels} />
-              </g>
+                    {/* Toys */}
+                    <g style={{ opacity: 0.9 }}>
+                      <g
+                        onClick={() => {
+                          if (!activeCatId || actionWindow) return;
+                          startActionWindow('play', activeCatId, 'toy1');
+                        }}
+                        className="cursor-pointer"
+                      >
+                        {/* Highlight ring for toy */}
+                        {shouldHighlightToys && (
+                          <circle cx={367} cy={377} r="30" fill="none" stroke="#22c55e" strokeWidth="4" opacity="0.8">
+                            <animate attributeName="r" values="25;35;25" dur="1s" repeatCount="indefinite" />
+                            <animate attributeName="opacity" values="0.9;0.4;0.9" dur="1s" repeatCount="indefinite" />
+                          </circle>
+                        )}
+                        <ToyBall x={350} y={360} />
+                        {shouldHighlightToys && (
+                          <text x={367} y={340} textAnchor="middle" fontSize="11" fill="#22c55e" fontWeight="bold">
+                            CLICK
+                          </text>
+                        )}
+                      </g>
+                      <ElementLabel x={370} y={405} label="Ball Toy" visible={showLabels} />
+                      <g
+                        onClick={() => {
+                          if (!activeCatId || actionWindow) return;
+                          startActionWindow('play', activeCatId, 'toy2');
+                        }}
+                        className="cursor-pointer"
+                      >
+                        {/* Highlight ring for yarn */}
+                        {shouldHighlightToys && (
+                          <circle cx={477} cy={442} r="30" fill="none" stroke="#22c55e" strokeWidth="4" opacity="0.8">
+                            <animate attributeName="r" values="25;35;25" dur="1s" repeatCount="indefinite" />
+                            <animate attributeName="opacity" values="0.9;0.4;0.9" dur="1s" repeatCount="indefinite" />
+                          </circle>
+                        )}
+                        <YarnBall x={460} y={425} />
+                        {shouldHighlightToys && (
+                          <text x={477} y={408} textAnchor="middle" fontSize="11" fill="#22c55e" fontWeight="bold">
+                            CLICK
+                          </text>
+                        )}
+                      </g>
+                      <ElementLabel x={485} y={470} label="Yarn Ball" visible={showLabels} />
+                    </g>
+                  </>
+                );
+              })()}
 
               {/* ==================== DANGER OBJECTS WITH GLOW ==================== */}
 
@@ -1103,6 +1212,22 @@ export default function CatChaosGame() {
                     }}
                     style={{ zIndex: Math.floor(cat.position.y) }}
                   >
+                    {/* Active cat selection glow */}
+                    {activeCatId === cat.id && (
+                      <circle
+                        cx={cat.position.x}
+                        cy={cat.position.y + 10}
+                        r="45"
+                        fill="none"
+                        stroke="#fbbf24"
+                        strokeWidth="3"
+                        strokeDasharray="8 4"
+                        opacity="0.8"
+                      >
+                        <animate attributeName="stroke-dashoffset" values="0;24" dur="1s" repeatCount="indefinite" />
+                      </circle>
+                    )}
+                    
                     {/* Cat sprite */}
                     <g filter="url(#catShadow)">
                       <CatSprite emoji={cat.emoji} x={cat.position.x} y={cat.position.y} state={cat.state} />
@@ -1127,18 +1252,6 @@ export default function CatChaosGame() {
                       })}
                     </g>
 
-                    {/* Urgent warning */}
-                    {urgent.value >= DISASTER_THRESHOLD && (
-                      <g transform={`translate(${cat.position.x - 28}, ${cat.position.y - 110})`}>
-                        <rect x="0" y="0" width="56" height="24" rx="8" fill="#ef4444">
-                          <animate attributeName="opacity" values="1;0.7;1" dur="0.4s" repeatCount="indefinite" />
-                        </rect>
-                        <rect x="2" y="2" width="52" height="20" rx="6" fill="none" stroke="#fff" strokeWidth="1" />
-                        <text x="28" y="16" textAnchor="middle" fontSize="10" fill="#fff" fontWeight="bold">
-                          {NEED_ICONS[urgent.type]} {urgent.type.toUpperCase()}!
-                        </text>
-                      </g>
-                    )}
 
                     {/* Scolded indicator */}
                     {cat.state === 'scolded' && (
@@ -1167,6 +1280,77 @@ export default function CatChaosGame() {
                   </text>
                 </g>
               ))}
+
+              {/* ==================== PIXEL-STYLE INSTRUCTION BOX ==================== */}
+              {(() => {
+                const instruction = getInstructionText(activeCatId, actionWindow, roundActions, cats);
+                return (
+                  <g transform={`translate(${GAME_WIDTH / 2}, ${GAME_HEIGHT - 45})`}>
+                    {/* Pixel-style box background */}
+                    <rect 
+                      x="-280" y="-30" width="560" height="70" 
+                      fill="#1a1a2e" 
+                      stroke="#3d3d5c" 
+                      strokeWidth="4"
+                      rx="2"
+                    />
+                    {/* Inner border for pixel effect */}
+                    <rect 
+                      x="-276" y="-26" width="552" height="62" 
+                      fill="none" 
+                      stroke="#4a4a6a" 
+                      strokeWidth="2"
+                      rx="1"
+                    />
+                    {/* Corner decorations for retro feel */}
+                    <rect x="-280" y="-30" width="8" height="8" fill="#fbbf24" />
+                    <rect x="272" y="-30" width="8" height="8" fill="#fbbf24" />
+                    <rect x="-280" y="32" width="8" height="8" fill="#fbbf24" />
+                    <rect x="272" y="32" width="8" height="8" fill="#fbbf24" />
+                    
+                    {/* Instruction text - line 1 */}
+                    <text 
+                      y="-6" 
+                      textAnchor="middle" 
+                      fontSize="16" 
+                      fontWeight="bold" 
+                      fill="#fbbf24"
+                      fontFamily="'Courier New', Courier, monospace"
+                      style={{ letterSpacing: '1px' }}
+                    >
+                      {instruction.line1}
+                    </text>
+                    
+                    {/* Instruction text - line 2 */}
+                    <text 
+                      y="18" 
+                      textAnchor="middle" 
+                      fontSize="14" 
+                      fill="#e5e5e5"
+                      fontFamily="'Courier New', Courier, monospace"
+                      style={{ letterSpacing: '0.5px' }}
+                    >
+                      {instruction.line2}
+                    </text>
+
+                    {/* Action window progress bar */}
+                    {actionWindow && (
+                      <g transform="translate(0, 28)">
+                        <rect x="-100" y="0" width="200" height="8" fill="#333" rx="2" />
+                        <rect 
+                          x="-100" y="0" 
+                          width={`${(actionWindow.currentPresses / actionWindow.requiredPresses) * 200}`} 
+                          height="8" 
+                          fill="#22c55e" 
+                          rx="2"
+                        >
+                          <animate attributeName="opacity" values="1;0.7;1" dur="0.3s" repeatCount="indefinite" />
+                        </rect>
+                      </g>
+                    )}
+                  </g>
+                );
+              })()}
             </svg>
           </div>
         </div>
@@ -1207,15 +1391,6 @@ export default function CatChaosGame() {
             </div>
           )}
 
-          {/* Instructions */}
-          <div className="mt-4 flex flex-wrap gap-6 text-sm text-stone-400 bg-stone-800/80 px-6 py-3 rounded-lg border border-stone-700">
-            <span className="flex items-center gap-2"><span className="text-lg">🐱</span> Click cat → Active</span>
-            <span className="flex items-center gap-2"><span className="text-lg">🥣</span> Click bowl → F/W</span>
-            <span className="flex items-center gap-2"><span className="text-lg">🎾</span> Click toy → P</span>
-            <span className="flex items-center gap-2"><span className="text-lg">💖</span> Pet → T</span>
-            <span className="flex items-center gap-2"><span className="text-lg">✋</span> No No → N</span>
-            <span className="flex items-center gap-2"><span className="text-lg">🏷️</span> Toggle → Show Labels</span>
-          </div>
         </>
       )}
 
