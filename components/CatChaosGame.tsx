@@ -430,33 +430,34 @@ export default function CatChaosGame() {
     catIdRef.current = 1;
   }, []);
 
-  // Add new cat periodically
-  useEffect(() => {
-    if (!gameStarted || gameOver) return;
-
-    const interval = setInterval(() => {
-      if (catIdRef.current < 6) {
-        const catTemplate = CATS[catIdRef.current % CATS.length];
-        const pos = getRandomSpawnPosition();
-        const newCat: Cat = {
-          id: `cat-${catIdRef.current}`,
-          ...catTemplate,
-          position: pos,
-          velocity: { x: 0, y: 0 },
-        needs: { hunger: 20, water: 20, play: 20, attention: 20 },
-          state: 'idle',
-          target: null,
-          personality: catIdRef.current === 1 ? 'mischievous' : 'balanced',
-          lastMoveTime: Date.now(),
-        };
-        setCats(prev => [...prev, newCat]);
-        addPopup(pos.x, pos.y - 25, `+1 ${catTemplate.emoji}`);
-        catIdRef.current++;
-      }
-    }, 25000);
-
-    return () => clearInterval(interval);
-  }, [gameStarted, gameOver, addPopup]);
+  // SIMPLIFIED MODE: Single cat only - no additional cat spawning
+  // TODO: Re-enable cat spawning for full game experience
+  // useEffect(() => {
+  //   if (!gameStarted || gameOver) return;
+  //
+  //   const interval = setInterval(() => {
+  //     if (catIdRef.current < 6) {
+  //       const catTemplate = CATS[catIdRef.current % CATS.length];
+  //       const pos = getRandomSpawnPosition();
+  //       const newCat: Cat = {
+  //         id: `cat-${catIdRef.current}`,
+  //         ...catTemplate,
+  //         position: pos,
+  //         velocity: { x: 0, y: 0 },
+  //         needs: { hunger: 20, water: 20, play: 20, attention: 20 },
+  //         state: 'idle',
+  //         target: null,
+  //         personality: catIdRef.current === 1 ? 'mischievous' : 'balanced',
+  //         lastMoveTime: Date.now(),
+  //       };
+  //       setCats(prev => [...prev, newCat]);
+  //       addPopup(pos.x, pos.y - 25, `+1 ${catTemplate.emoji}`);
+  //       catIdRef.current++;
+  //     }
+  //   }, 25000);
+  //
+  //   return () => clearInterval(interval);
+  // }, [gameStarted, gameOver, addPopup]);
 
   // Game loop (same as before)
   useEffect(() => {
@@ -646,6 +647,7 @@ export default function CatChaosGame() {
       <div className="mb-4 text-center">
         <h1 className="text-4xl font-bold text-amber-200 drop-shadow-lg">Cat Chaos Mansion</h1>
         <p className="text-stone-400 text-sm">Keep your cats happy and your valuables safe!</p>
+        <p className="text-amber-500 text-xs mt-1 bg-amber-500/10 px-3 py-1 rounded-full inline-block">🧪 Simplified Mode: Single Cat Testing</p>
       </div>
 
       {!gameStarted ? (

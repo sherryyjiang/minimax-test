@@ -3,6 +3,24 @@
 This file tracks incremental build steps for the game. Specs stay in
 `cat_chaos_gameplay.md` and `cat_chaos_specs.md`.
 
+## Current Mode: SIMPLIFIED (Single Cat Testing)
+
+**Status:** Active - cat spawning is disabled to allow isolated testing of core mechanics.
+
+### What's Different in Simplified Mode:
+- Only ONE cat spawns at game start (Mochi)
+- No additional cats spawn over time
+- All core mechanics remain active (needs, bowls, toys, disasters)
+- Perfect for testing individual action flows without distraction
+
+### To Re-enable Full Mode:
+1. Open `components/CatChaosGame.tsx`
+2. Find the commented-out "Add new cat periodically" section (around line 433)
+3. Uncomment the entire `useEffect` block
+4. Remove the "Simplified Mode" banner from the title section
+
+---
+
 ## Workflow
 
 - For each task: I run `npm run lint` first, then you run manual checks.
