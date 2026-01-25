@@ -81,6 +81,22 @@ const DISASTER_THRESHOLD = 65;
 const SCOLD_DURATION = 2000;
 const ACTION_WINDOW_MS = 8000;
 const DISASTER_MOVE_SPEED = 1.5; // Speed when cat moves autonomously to destroy
+
+// Round timer settings - creates urgency!
+const ROUND_TIMER_BASE_SECONDS = 25; // Base time for a single action
+const ROUND_TIMER_PER_ACTION_SECONDS = 12; // Additional time per extra action
+const TIMER_SPEED_MULTIPLIERS: Record<string, number> = {
+  intro: 1.0,    // Rounds 1-3
+  early: 0.95,   // Rounds 4-8
+  mid: 0.90,     // Rounds 9-16
+  late: 0.85,    // Rounds 17-26
+  endless: 0.80, // Rounds 27+
+};
+
+// Timer urgency thresholds (percentage of time remaining)
+const TIMER_COMFORTABLE = 0.5;  // >50% - green, calm
+const TIMER_WARNING = 0.25;      // 25-50% - yellow, slight pulse
+const TIMER_CRITICAL = 0.15;     // <15% - red, aggressive pulse
 const ACTION_PRESS_COUNTS = {
   food: 5,
   water: 4,
@@ -181,11 +197,17 @@ const getInstructionText = (
   cats: Cat[],
   isNearTarget: boolean,
   isDisasterMode: boolean,
-  zones: Zone[]
+  zones: Zone[],
+  timeRemainingPercent: number = 1
 ): { line1: string; line2: string } => {
   // Find current uncompleted action
   const currentAction = roundActions.find(a => !a.completed);
   const cat = cats[0]; // Single cat mode
+  
+  // Urgency prefix based on time remaining
+  const isUrgent = timeRemainingPercent <= TIMER_WARNING;
+  const isCritical = timeRemainingPercent <= TIMER_CRITICAL;
+  const urgencyPrefix = isCritical ? '⚡ HURRY! ' : isUrgent ? '⏱️ ' : '';
   
   if (!cat) {
     return { line1: 'Welcome to Cat Chaos!', line2: 'Press Start to begin' };
@@ -199,7 +221,7 @@ const getInstructionText = (
   if (currentAction.type === 'disaster') {
     if (isDisasterMode) {
       return {
-        line1: `${cat.name} is being NAUGHTY!`,
+        line1: `${urgencyPrefix}${cat.name} is being NAUGHTY!`,
         line2: 'Press N rapidly to say "NO NO!"'
       };
     }
@@ -215,7 +237,7 @@ const getInstructionText = (
     const keyMap = { food: 'F', water: 'W', play: 'P', pet: 'T', no_no: 'N' };
     const key = keyMap[actionWindow.type];
     return {
-      line1: `Press ${key} rapidly!`,
+      line1: `${urgencyPrefix}Press ${key} rapidly!`,
       line2: `${remaining} more ${remaining === 1 ? 'press' : 'presses'} needed`
     };
   }
@@ -227,40 +249,40 @@ const getInstructionText = (
     case 'hunger':
       if (isNearTarget) {
         return {
-          line1: `${cat.name} is at the food bowl!`,
+          line1: `${urgencyPrefix}${cat.name} is at the food bowl!`,
           line2: 'Press F to fill the bowl'
         };
       }
       return {
-        line1: `${cat.name} is hungry!`,
-        line2: 'Use ARROW KEYS to move to the food bowl'
+        line1: `${urgencyPrefix}${cat.name} is hungry!`,
+        line2: isCritical ? 'MOVE NOW! Arrow keys → food bowl' : 'Use ARROW KEYS to move to the food bowl'
       };
     case 'water':
       if (isNearTarget) {
         return {
-          line1: `${cat.name} is at the water bowl!`,
+          line1: `${urgencyPrefix}${cat.name} is at the water bowl!`,
           line2: 'Press W to fill the bowl'
         };
       }
       return {
-        line1: `${cat.name} is thirsty!`,
-        line2: 'Use ARROW KEYS to move to the water bowl'
+        line1: `${urgencyPrefix}${cat.name} is thirsty!`,
+        line2: isCritical ? 'MOVE NOW! Arrow keys → water bowl' : 'Use ARROW KEYS to move to the water bowl'
       };
     case 'play':
       if (isNearTarget) {
         return {
-          line1: `${cat.name} found a toy!`,
+          line1: `${urgencyPrefix}${cat.name} found a toy!`,
           line2: 'Press P to play'
         };
       }
       return {
-        line1: `${cat.name} wants to play!`,
-        line2: 'Use ARROW KEYS to move to a toy'
+        line1: `${urgencyPrefix}${cat.name} wants to play!`,
+        line2: isCritical ? 'MOVE NOW! Arrow keys → toy' : 'Use ARROW KEYS to move to a toy'
       };
     case 'attention':
       return {
-        line1: `${cat.name} wants attention!`,
-        line2: 'Press T to pet the cat'
+        line1: `${urgencyPrefix}${cat.name} wants attention!`,
+        line2: isCritical ? 'PRESS T NOW to pet!' : 'Press T to pet the cat'
       };
     default:
       return { line1: 'Keep your cat happy!', line2: '' };
@@ -283,6 +305,11 @@ export default function CatChaosGame() {
   const [roundActions, setRoundActions] = useState<RoundAction[]>([]);
   const [showRoundBanner, setShowRoundBanner] = useState(false);
   const [roundPaused, setRoundPaused] = useState(false);
+  // Round timer state
+  const [roundTimeRemaining, setRoundTimeRemaining] = useState(0); // in milliseconds
+  const [roundTimerTotal, setRoundTimerTotal] = useState(0); // total time for the round
+  const [roundTimerActive, setRoundTimerActive] = useState(false);
+  const [showTimerCritical, setShowTimerCritical] = useState(false);
   // Movement and disaster state
   const [keysPressed, setKeysPressed] = useState<Set<string>>(new Set());
   const [isDisasterMode, setIsDisasterMode] = useState(false);
@@ -344,6 +371,27 @@ export default function CatChaosGame() {
     }, 800);
   }, [addPopup]);
 
+  // Calculate round timer duration based on round number and action count
+  const calculateRoundTimer = useCallback((round: number, actionCount: number): number => {
+    // Determine difficulty stage
+    let stage: string;
+    if (round <= 3) stage = 'intro';
+    else if (round <= 8) stage = 'early';
+    else if (round <= 16) stage = 'mid';
+    else if (round <= 26) stage = 'late';
+    else stage = 'endless';
+    
+    const speedMultiplier = TIMER_SPEED_MULTIPLIERS[stage];
+    
+    // Calculate base time: base + additional per extra action
+    const baseTime = ROUND_TIMER_BASE_SECONDS + (Math.max(0, actionCount - 1) * ROUND_TIMER_PER_ACTION_SECONDS);
+    
+    // Apply speed multiplier (lower = faster = harder)
+    const finalTime = Math.round(baseTime * speedMultiplier);
+    
+    return finalTime * 1000; // Return in milliseconds
+  }, []);
+
   // Generate actions for a round based on round number
   const generateRoundActions = useCallback((round: number): RoundAction[] => {
     const actionTypes: Array<'hunger' | 'water' | 'play' | 'attention'> = ['hunger', 'water', 'play', 'attention'];
@@ -385,6 +433,13 @@ export default function CatChaosGame() {
     setRoundActions(actions);
     setShowRoundBanner(true);
     setRoundPaused(true);
+    setRoundTimerActive(false);
+    setShowTimerCritical(false);
+    
+    // Calculate and set round timer
+    const timerDuration = calculateRoundTimer(round, actions.length);
+    setRoundTimerTotal(timerDuration);
+    setRoundTimeRemaining(timerDuration);
     
     // Check if this is a disaster round
     const isDisasterRound = actions.some(a => a.type === 'disaster');
@@ -408,6 +463,7 @@ export default function CatChaosGame() {
       setTimeout(() => {
         setShowRoundBanner(false);
         setRoundPaused(false);
+        setRoundTimerActive(true);
         setIsDisasterMode(true);
       }, 2000);
     } else {
@@ -426,25 +482,49 @@ export default function CatChaosGame() {
       
       setIsDisasterMode(false);
       
-      // Hide banner and unpause after 2 seconds
+      // Hide banner and unpause after 2 seconds, then start timer
       setTimeout(() => {
         setShowRoundBanner(false);
         setRoundPaused(false);
+        setRoundTimerActive(true);
       }, 2000);
     }
-  }, [generateRoundActions, zones]);
+  }, [generateRoundActions, zones, calculateRoundTimer]);
 
   // Check if round is complete - called after updating round actions
   const checkRoundComplete = useCallback((updatedActions: RoundAction[]) => {
     const allComplete = updatedActions.length > 0 && updatedActions.every(a => a.completed);
-    if (allComplete && !showRoundBanner) {
+    if (allComplete && !showRoundBanner && roundTimerActive) {
+      // Stop the timer
+      setRoundTimerActive(false);
+      
+      // Calculate time bonus - reward for finishing early!
+      const timeRemainingPercent = roundTimerTotal > 0 ? roundTimeRemaining / roundTimerTotal : 0;
+      let timeBonus = 0;
+      
+      if (timeRemainingPercent > 0.5) {
+        // >50% time remaining: excellent bonus
+        timeBonus = Math.round(15 * timeRemainingPercent);
+      } else if (timeRemainingPercent > 0.25) {
+        // 25-50% time remaining: good bonus
+        timeBonus = Math.round(8 * timeRemainingPercent);
+      } else if (timeRemainingPercent > 0) {
+        // <25% time remaining: small bonus
+        timeBonus = Math.round(3 * timeRemainingPercent);
+      }
+      
+      if (timeBonus > 0) {
+        setScore(s => s + timeBonus);
+      }
+      
       // Advance to next round
       const nextRound = currentRound + 1;
       setCurrentRound(nextRound);
       
-      // Show completion popup
+      // Show completion popup with time bonus
       if (cats.length > 0) {
-        addPopup(cats[0].position.x, cats[0].position.y - 50, `Round ${currentRound} Complete! 🎉`);
+        const bonusText = timeBonus > 0 ? ` +${timeBonus} ⏱️` : '';
+        addPopup(cats[0].position.x, cats[0].position.y - 50, `Round ${currentRound} Complete!${bonusText}`);
       }
       
       // Start next round after a brief delay
@@ -452,7 +532,7 @@ export default function CatChaosGame() {
         startNewRound(nextRound);
       }, 1500);
     }
-  }, [showRoundBanner, currentRound, cats, addPopup, startNewRound]);
+  }, [showRoundBanner, currentRound, cats, addPopup, startNewRound, roundTimerActive, roundTimerTotal, roundTimeRemaining]);
 
   // Get most urgent need
   const getMostUrgentNeed = useCallback((cat: Cat): { type: 'hunger' | 'water' | 'play' | 'attention'; value: number; zone?: Zone } => {
@@ -819,6 +899,9 @@ export default function CatChaosGame() {
     // Generate first round actions
     const firstRoundActions = generateRoundActions(1);
     
+    // Calculate timer for first round
+    const firstRoundTimer = calculateRoundTimer(1, firstRoundActions.length);
+    
     // Set initial needs based on round actions
     const initialNeeds = { hunger: 20, water: 20, play: 20, attention: 20 };
     firstRoundActions.forEach((action, idx) => {
@@ -852,14 +935,20 @@ export default function CatChaosGame() {
     setRoundActions(firstRoundActions);
     setShowRoundBanner(true);
     setRoundPaused(true);
+    // Initialize timer
+    setRoundTimerTotal(firstRoundTimer);
+    setRoundTimeRemaining(firstRoundTimer);
+    setRoundTimerActive(false);
+    setShowTimerCritical(false);
     catIdRef.current = 1;
     
-    // Hide banner after 2 seconds
+    // Hide banner after 2 seconds and start timer
     setTimeout(() => {
       setShowRoundBanner(false);
       setRoundPaused(false);
+      setRoundTimerActive(true);
     }, 2000);
-  }, [generateRoundActions]);
+  }, [generateRoundActions, calculateRoundTimer]);
 
   // SIMPLIFIED MODE: Single cat only - no additional cat spawning
   // TODO: Re-enable cat spawning for full game experience
@@ -1024,6 +1113,74 @@ export default function CatChaosGame() {
     };
   }, [gameStarted, gameOver, roundPaused, score, zones, keysPressed, isDisasterMode, roundActions, addPopup, checkRoundComplete]);
 
+  // Round timer countdown effect
+  useEffect(() => {
+    if (!roundTimerActive || roundPaused || gameOver || !gameStarted) return;
+    
+    const interval = setInterval(() => {
+      setRoundTimeRemaining(prev => {
+        const newTime = prev - 100; // Decrease by 100ms
+        
+        // Check for critical threshold
+        if (roundTimerTotal > 0) {
+          const percentRemaining = newTime / roundTimerTotal;
+          setShowTimerCritical(percentRemaining <= TIMER_CRITICAL);
+        }
+        
+        // Timer expired - apply penalties for incomplete actions
+        if (newTime <= 0) {
+          setRoundTimerActive(false);
+          
+          // Count incomplete actions and apply penalties
+          const incompleteActions = roundActions.filter(a => !a.completed);
+          let totalPenalty = 0;
+          
+          incompleteActions.forEach(action => {
+            switch (action.type) {
+              case 'hunger': totalPenalty += 6; break;
+              case 'water': totalPenalty += 4; break;
+              case 'play': totalPenalty += 4; break;
+              case 'attention': totalPenalty += 3; break;
+              case 'disaster': totalPenalty += 15; break;
+            }
+          });
+          
+          if (totalPenalty > 0) {
+            setScore(s => Math.max(0, s - totalPenalty));
+            if (cats.length > 0) {
+              addPopup(cats[0].position.x, cats[0].position.y - 40, `TIME'S UP! -${totalPenalty}`);
+            }
+          }
+          
+          // Mark all actions as completed (failed) and move to next round
+          setRoundActions(prev => prev.map(a => ({ ...a, completed: true })));
+          setIsDisasterMode(false);
+          
+          // Check if game over
+          setScore(s => {
+            if (s - totalPenalty <= 0) {
+              setGameOver(true);
+            }
+            return s;
+          });
+          
+          // Advance to next round after delay
+          setTimeout(() => {
+            const nextRound = currentRound + 1;
+            setCurrentRound(nextRound);
+            startNewRound(nextRound);
+          }, 1500);
+          
+          return 0;
+        }
+        
+        return newTime;
+      });
+    }, 100);
+    
+    return () => clearInterval(interval);
+  }, [roundTimerActive, roundPaused, gameOver, gameStarted, roundTimerTotal, roundActions, cats, addPopup, currentRound, startNewRound]);
+
   // Reset fallen objects
   useEffect(() => {
     if (!gameStarted || gameOver) return;
@@ -1041,7 +1198,6 @@ export default function CatChaosGame() {
       <div className="mb-4 text-center">
         <h1 className="text-4xl font-bold text-amber-200 drop-shadow-lg">Cat Chaos Mansion</h1>
         <p className="text-stone-400 text-sm">Keep your cats happy and your valuables safe!</p>
-        <p className="text-amber-500 text-xs mt-1 bg-amber-500/10 px-3 py-1 rounded-full inline-block">🧪 Simplified Mode: Single Cat Testing</p>
       </div>
 
       {!gameStarted ? (
@@ -1051,6 +1207,18 @@ export default function CatChaosGame() {
             Guide your cat around the room to fulfill their needs!
             Move to items and press keys to interact.
           </p>
+          
+          {/* Timer info */}
+          <div className="bg-amber-500/20 border border-amber-500/40 rounded-lg px-4 py-2 text-center">
+            <div className="flex items-center justify-center gap-2 text-amber-300">
+              <span className="text-xl">⏱️</span>
+              <span className="font-semibold">Beat the clock!</span>
+            </div>
+            <p className="text-amber-200/80 text-xs mt-1">
+              Complete each round before time runs out. Finish fast for bonus points!
+            </p>
+          </div>
+          
           <div className="grid grid-cols-2 gap-4 text-stone-300 text-sm">
             <div className="flex items-center gap-2"><span className="text-2xl">⬆️⬇️⬅️➡️</span> Arrow keys to move</div>
             <div className="flex items-center gap-2"><span className="text-2xl">🍖</span> At food bowl → Press F</div>
@@ -1069,7 +1237,7 @@ export default function CatChaosGame() {
       ) : (
         <>
           {/* HUD */}
-          <div className="flex gap-6 mb-4 bg-stone-800/90 px-6 py-2 rounded-full shadow-lg border border-stone-700 items-center">
+          <div className="flex gap-4 mb-4 bg-stone-800/90 px-6 py-2 rounded-full shadow-lg border border-stone-700 items-center">
             <div className={`text-2xl font-bold ${score <= 25 ? 'text-red-400 animate-pulse' : 'text-amber-300'}`}>
               {score}
             </div>
@@ -1079,6 +1247,24 @@ export default function CatChaosGame() {
               <span className="font-bold text-amber-200 text-lg">{currentRound}</span>
             </div>
             <div className="h-6 w-px bg-stone-600" />
+            {/* Timer display in HUD */}
+            {roundTimerActive && roundTimerTotal > 0 && (
+              <>
+                <div className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold ${
+                  roundTimeRemaining / roundTimerTotal <= TIMER_CRITICAL 
+                    ? 'bg-red-500/30 text-red-300 animate-pulse' 
+                    : roundTimeRemaining / roundTimerTotal <= TIMER_WARNING
+                      ? 'bg-orange-500/20 text-orange-300'
+                      : roundTimeRemaining / roundTimerTotal <= TIMER_COMFORTABLE
+                        ? 'bg-yellow-500/20 text-yellow-300'
+                        : 'bg-green-500/20 text-green-300'
+                }`}>
+                  <span>⏱️</span>
+                  <span>{Math.ceil(roundTimeRemaining / 1000)}s</span>
+                </div>
+                <div className="h-6 w-px bg-stone-600" />
+              </>
+            )}
             <div className="flex items-center gap-2">
               {roundActions.map((action, idx) => (
                 <div
@@ -1104,12 +1290,30 @@ export default function CatChaosGame() {
             >
               {showLabels ? 'Hide Labels' : 'Show Labels'}
             </button>
+            <div className="h-6 w-px bg-stone-600" />
+            <button
+              onClick={() => {
+                setGameStarted(false);
+                setCats([]);
+                setScore(100);
+                setRoundActions([]);
+                setCurrentRound(1);
+                setRoundTimerActive(false);
+              }}
+              className="px-3 py-1 rounded-full text-sm font-medium bg-stone-700 text-stone-300 hover:bg-red-600 hover:text-white transition-colors"
+            >
+              End Game
+            </button>
           </div>
 
           <div className="flex flex-col items-center">
             {/* Game Room */}
             <div
-              className={`relative rounded-xl shadow-2xl overflow-hidden border-4 border-stone-600 ${disasterMode ? 'animate-shake' : ''}`}
+              className={`relative rounded-xl shadow-2xl overflow-hidden border-4 ${
+                showTimerCritical 
+                  ? 'border-red-500 animate-timer-critical' 
+                  : 'border-stone-600'
+              } ${disasterMode ? 'animate-shake' : ''}`}
               style={{ width: GAME_WIDTH, height: GAME_HEIGHT }}
             >
               <svg width={GAME_WIDTH} height={GAME_HEIGHT} viewBox={`0 0 ${GAME_WIDTH} ${GAME_HEIGHT}`}>
@@ -1481,6 +1685,173 @@ export default function CatChaosGame() {
               {/* Vignette effect for room atmosphere */}
               <rect width={GAME_WIDTH} height={GAME_HEIGHT} fill="url(#vignette)" pointerEvents="none" />
 
+              {/* ==================== ROUND TIMER BAR ==================== */}
+              {roundTimerActive && roundTimerTotal > 0 && (
+                (() => {
+                  const percentRemaining = roundTimeRemaining / roundTimerTotal;
+                  const secondsRemaining = Math.ceil(roundTimeRemaining / 1000);
+                  
+                  // Determine timer color and urgency state
+                  let timerColor = '#22c55e'; // green - comfortable
+                  let bgColor = '#166534';
+                  let pulseSpeed = '0s';
+                  let glowIntensity = 0;
+                  let showHurry = false;
+                  
+                  if (percentRemaining <= TIMER_CRITICAL) {
+                    timerColor = '#ef4444'; // red - critical
+                    bgColor = '#7f1d1d';
+                    pulseSpeed = '0.3s';
+                    glowIntensity = 8;
+                    showHurry = true;
+                  } else if (percentRemaining <= TIMER_WARNING) {
+                    timerColor = '#f97316'; // orange - warning
+                    bgColor = '#7c2d12';
+                    pulseSpeed = '0.6s';
+                    glowIntensity = 4;
+                  } else if (percentRemaining <= TIMER_COMFORTABLE) {
+                    timerColor = '#eab308'; // yellow - moderate
+                    bgColor = '#713f12';
+                    pulseSpeed = '1s';
+                    glowIntensity = 2;
+                  }
+                  
+                  const timerWidth = 300;
+                  const timerHeight = 20;
+                  const timerX = (GAME_WIDTH - timerWidth) / 2;
+                  const timerY = 130;
+                  const fillWidth = timerWidth * percentRemaining;
+                  
+                  return (
+                    <g>
+                      {/* Timer glow effect for urgency */}
+                      {glowIntensity > 0 && (
+                        <rect
+                          x={timerX - 5}
+                          y={timerY - 5}
+                          width={timerWidth + 10}
+                          height={timerHeight + 10}
+                          rx="12"
+                          fill="none"
+                          stroke={timerColor}
+                          strokeWidth="3"
+                          opacity="0.5"
+                        >
+                          <animate 
+                            attributeName="opacity" 
+                            values="0.6;0.2;0.6" 
+                            dur={pulseSpeed} 
+                            repeatCount="indefinite" 
+                          />
+                        </rect>
+                      )}
+                      
+                      {/* Timer background */}
+                      <rect
+                        x={timerX}
+                        y={timerY}
+                        width={timerWidth}
+                        height={timerHeight}
+                        rx="10"
+                        fill={bgColor}
+                        stroke="#374151"
+                        strokeWidth="2"
+                      />
+                      
+                      {/* Timer fill bar */}
+                      <rect
+                        x={timerX}
+                        y={timerY}
+                        width={fillWidth}
+                        height={timerHeight}
+                        rx="10"
+                        fill={timerColor}
+                      >
+                        {pulseSpeed !== '0s' && (
+                          <animate 
+                            attributeName="opacity" 
+                            values="1;0.7;1" 
+                            dur={pulseSpeed} 
+                            repeatCount="indefinite" 
+                          />
+                        )}
+                      </rect>
+                      
+                      {/* Timer border */}
+                      <rect
+                        x={timerX}
+                        y={timerY}
+                        width={timerWidth}
+                        height={timerHeight}
+                        rx="10"
+                        fill="none"
+                        stroke="#1f2937"
+                        strokeWidth="2"
+                      />
+                      
+                      {/* Clock icon */}
+                      <text
+                        x={timerX - 25}
+                        y={timerY + 15}
+                        fontSize="16"
+                        textAnchor="middle"
+                      >
+                        ⏱️
+                      </text>
+                      
+                      {/* Seconds remaining - centered on timer */}
+                      <text
+                        x={GAME_WIDTH / 2}
+                        y={timerY + 15}
+                        textAnchor="middle"
+                        fontSize="14"
+                        fontWeight="bold"
+                        fill="#fff"
+                        style={{ textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}
+                      >
+                        {secondsRemaining}s
+                      </text>
+                      
+                      {/* HURRY! text when critical */}
+                      {showHurry && (
+                        <g>
+                          <text
+                            x={timerX + timerWidth + 40}
+                            y={timerY + 16}
+                            textAnchor="middle"
+                            fontSize="14"
+                            fontWeight="bold"
+                            fill="#ef4444"
+                          >
+                            <animate 
+                              attributeName="opacity" 
+                              values="1;0.3;1" 
+                              dur="0.3s" 
+                              repeatCount="indefinite" 
+                            />
+                            HURRY!
+                          </text>
+                        </g>
+                      )}
+                      
+                      {/* Time bonus indicator - shows when plenty of time left */}
+                      {percentRemaining > 0.5 && (
+                        <text
+                          x={timerX + timerWidth + 40}
+                          y={timerY + 16}
+                          textAnchor="middle"
+                          fontSize="11"
+                          fill="#22c55e"
+                          fontWeight="medium"
+                        >
+                          +BONUS
+                        </text>
+                      )}
+                    </g>
+                  );
+                })()
+              )}
+
               {/* Popups */}
               {popups.map(popup => (
                 <g key={popup.id} transform={`translate(${popup.x}, ${popup.y})`}>
@@ -1506,7 +1877,8 @@ export default function CatChaosGame() {
                 const currentAction = roundActions.find(a => !a.completed);
                 const cat = cats[0];
                 const isNearTarget = cat ? isCatNearCurrentTarget(cat, currentAction) : false;
-                const instruction = getInstructionText(actionWindow, roundActions, cats, isNearTarget, isDisasterMode, zones);
+                const timePercent = roundTimerTotal > 0 ? roundTimeRemaining / roundTimerTotal : 1;
+                const instruction = getInstructionText(actionWindow, roundActions, cats, isNearTarget, isDisasterMode, zones, timePercent);
                 return (
                   <g transform={`translate(${GAME_WIDTH / 2}, ${GAME_HEIGHT - 45})`}>
                     {/* Pixel-style box background */}
@@ -1583,7 +1955,16 @@ export default function CatChaosGame() {
             <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-40 pointer-events-none">
               <div className="bg-gradient-to-r from-amber-600 to-orange-500 rounded-2xl px-12 py-8 text-center shadow-2xl border-2 border-amber-300 animate-pulse">
                 <div className="text-5xl font-bold text-white mb-2">Round {currentRound}</div>
-                <div className="flex items-center justify-center gap-4 mt-4">
+                
+                {/* Timer preview - shows how much time they'll have */}
+                <div className="flex items-center justify-center gap-2 mt-3 mb-4">
+                  <span className="text-3xl">⏱️</span>
+                  <span className="text-2xl font-bold text-white">
+                    {Math.ceil(roundTimerTotal / 1000)} seconds
+                  </span>
+                </div>
+                
+                <div className="flex items-center justify-center gap-4">
                   {roundActions.map((action, idx) => (
                     <div key={idx} className="flex items-center gap-2 bg-white/20 px-4 py-2 rounded-full">
                       <span className="text-2xl">{NEED_ICONS[action.type]}</span>
@@ -1591,7 +1972,10 @@ export default function CatChaosGame() {
                     </div>
                   ))}
                 </div>
-                <p className="text-amber-100 text-sm mt-4">Complete the actions above!</p>
+                
+                <p className="text-amber-100 text-sm mt-4">
+                  Complete before time runs out! Finish fast for bonus points ⏱️
+                </p>
               </div>
             </div>
           )}
@@ -1627,6 +2011,19 @@ export default function CatChaosGame() {
         }
         .animate-shake {
           animation: shake 0.4s ease-in-out;
+        }
+        @keyframes timer-critical {
+          0%, 100% { 
+            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+            transform: scale(1);
+          }
+          50% { 
+            box-shadow: 0 0 20px 5px rgba(239, 68, 68, 0.4);
+            transform: scale(1.005);
+          }
+        }
+        .animate-timer-critical {
+          animation: timer-critical 0.5s ease-in-out infinite;
         }
       `}</style>
     </div>
